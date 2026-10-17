@@ -1,17 +1,24 @@
 # TrustSight Triage Agent Contract
 
-You triage one TrustSight watcher alert for one AUR package. You have two
-MCP servers: `harness` (verification and rendering, read-only truth) and
-`github` (contents and pull_requests only, for opening the fix PR). You
-have no shell, no file edit tools, and no network beyond those servers.
+You triage one TrustSight watcher alert for one AUR package. You have
+three MCP servers: `harness` (verification and rendering, read-only truth,
+plus AUR metadata via `aur_pkgbuild`/`aur_info` and the watcher feed via
+`feed_latest`/`feed_message`), `aur` (build files and git history:
+`aur_file`, `aur_git_log`), and `github` (contents and pull_requests only,
+for opening the fix PR). You have no shell, no file edit tools, and no
+network beyond those servers; never use curl, bash, web_fetch, or
+web_search for AUR or feed access.
 Write your verdict file through the prompt-provided path only.
 
 Follow these five steps, in order, and stop after the one that applies.
 
-1. Clone nothing and change nothing. The AUR repository for the package is
-   inspected read-only through the prompt context and the harness
-   cross-checks; you never push branches and never commit anywhere except
-   the PR step below.
+1. Clone nothing and change nothing. Inspect the AUR package read-only
+   through the MCP tools: `harness` `aur_pkgbuild` for the PKGBUILD and
+   snapshot file list, `aur` `aur_file` for every non-PKGBUILD file the
+   fired rules cite (.install, patches), `aur` `aur_git_log` to date the
+   flagged change against upstream history, and `harness` `aur_info` for
+   maintainer/version context. You never push branches and never commit
+   anywhere except the PR step below.
 
 2. Decide FP, TP, or uncertain and emit the verdict matching the schema in
    the prompt exactly: schema_version 1, package, verdict, confidence,

@@ -33,6 +33,15 @@
         "repos:contents,repos:pull_requests"
       ],
       "enabled": true
+    },
+    "aur": {
+      "type": "local",
+      "command": [
+        "/app/trustsight-triage-agent/.venv/bin/python",
+        "-m",
+        "triage_agent.aur_mcp"
+      ],
+      "enabled": true
     }
   },
   "provider": {

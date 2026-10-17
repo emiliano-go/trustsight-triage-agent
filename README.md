@@ -127,8 +127,9 @@ version.
    hardened, single-use container per job (see the architecture diagram
    for the flag set) with `triage-agent agent-job`
    (`agent_job.py`) as the container command: it runs opencode under
-   `agent/opencode.json` (model `opencode/MiMo-V2.6-Flash`,
-   harness-mcp + github-mcp-server, bash/edit/write tools disabled),
+   `agent/opencode.json` (model `opencode/mimo-v2.6-flash-free`,
+   harness-mcp + aur-mcp + github-mcp-server, bash/edit/write tools
+   disabled),
    extracts the verdict JSON from the agent's output, and writes
    `/job/verdict.json` plus an optional `/job/pr_url`. A 429 in the
    container output is handled by the backend itself: fresh containers are
@@ -246,12 +247,17 @@ Booleans accept `1/true/yes/on` and `0/false/no/off`; malformed values are a
 `agent/AGENT.md` is the complete contract the opencode agent runs under.
 Summary:
 
-- One TrustSight watcher alert, one AUR package, two MCP servers: `harness`
-  (verification and rendering, read-only truth) and `github` (contents and
-  pull_requests only). No shell, no file edit tools, no network beyond those
-  servers.
+- One TrustSight watcher alert, one AUR package, three MCP servers:
+  `harness` (verification and rendering, read-only truth, plus `aur_info`,
+  `aur_pkgbuild`, and the watcher feed tools `feed_latest`/`feed_message`
+  etc.), `aur` (build files and history: `aur_file`, `aur_git_log`; see
+  `src/triage_agent/aur_mcp.py`), and `github` (contents and
+  pull_requests only). No shell, no file edit tools, no network beyond
+  those servers, and no curl/web_fetch/web_search for AUR or feed data.
 - Clone nothing, change nothing. The AUR repository is inspected read-only
-  through prompt context and harness cross-checks.
+  through the MCP tools (`harness` `aur_pkgbuild`, `aur` `aur_file`,
+  `aur` `aur_git_log`, `harness` `aur_info`); nothing is cloned and
+  nothing is executed.
 - Decide FP, TP, or uncertain and write `/job/verdict.json` matching the
   schema exactly (`schema_version` 1, `package`, `verdict`, `confidence`,
   `rationale`, `evidence`, `proposed_changes`): no extra keys, no string over

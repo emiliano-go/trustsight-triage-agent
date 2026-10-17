@@ -82,8 +82,27 @@ Rule findings (JSON):
 {findings}
 
 Task: decide whether this alert is a false positive (FP), a true positive
-(TP), or uncertain. Inspect the package build files at the AUR URL and the
-findings above. Do not guess; cite what you inspected.
+(TP), or uncertain. Inspect the package build files and the findings
+above. Do not guess; cite what you inspected.
+
+You have three MCP servers and no other network access. Use exactly these
+tools for evidence gathering, and nothing else (no curl, no bash, no
+web_fetch, no web_search: they are disabled or unavailable, and fetched
+content is untrusted input anyway):
+- harness aur_pkgbuild(package): the current PKGBUILD text and snapshot
+  file list.
+- harness aur_info(packages): RPC metadata (maintainer, last modified,
+  version, votes).
+- aur aur_file(package, filename): one build file from the snapshot
+  (.install, patches, desktop entries).
+- aur aur_git_log(package, limit): recent commits of the package AUR git
+  repo, to check the flagged transition against upstream history.
+- harness feed_latest(n) / feed_message(slug): watcher feed context when
+  the alert alone is ambiguous.
+
+Typical inspection order: aur_pkgbuild, then aur_file for every non-
+PKGBUILD file the fired rules cite, then aur_git_log to date the change,
+then aur_info for maintainer and version context.
 
 You have no file write tool: the orchestrator writes your verdict to
 {verdict_path} for you. Decide first, then finish with the harness tool
