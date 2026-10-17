@@ -138,6 +138,10 @@ class DockerBackend:
     def _run_flags(self, container: str, volume: str) -> list[str]:
         flags = [
             "run",
+            "--rm",
+            # Exited job containers must never accumulate: the container
+            # name is deterministic per job/attempt, so a leftover turns
+            # the retry into a daemon 125 name conflict.
             "--name", container,
             "--read-only",
             "--tmpfs", "/tmp",
