@@ -165,3 +165,75 @@ def test_render_pr_cli_argv(monkeypatch):
     assert calls["kwargs"]["timeout"] == 7
     assert not Path(calls["result_path"]).exists()
     assert calls["sent"] == {"kind": "FP"}
+
+
+class FakeListClient:
+    """Serves the pulls list endpoint; records the head filter."""
+
+    def __init__(self, items=None, status=200):
+        self.items = items if items is not None else []
+        self.status = status
+        self.requests: list[dict] = []
+
+    def request(self, method, url, **kwargs):
+        self.requests.append({"method": method, "url": url, **kwargs})
+        if self.status >= 400:
+            return FakeApiResponse(self.status, {"message": "Not Found"})
+        return FakeApiResponse(200, list(self.items))
+
+
+def test_find_pr_matches_head_filter():
+    client = FakeListClient(
+        [{"html_url": PR_URL, "head": {"ref": "triage/x"}}]
+    )
+    found = pr_backstop.find_pr(
+        branch="triage/x", repo="acme/trustsight", token="tok", client=client
+    )
+    assert found == PR_URL
+    assert client.requests[0]["params"]["head"] == "triage/x"
+
+
+def test_find_pr_prefixes_owner_when_known():
+    client = FakeListClient([{"html_url": PR_URL}])
+    pr_backstop.find_pr(
+        branch="triage/x", repo="acme/trustsight", token="tok", client=client,
+        head_owner="bot",
+    )
+    assert client.requests[0]["params"]["head"] == "bot:triage/x"
+
+
+def test_find_pr_returns_none_on_empty_or_404():
+    assert pr_backstop.find_pr(
+        branch="b", repo="r/r", token="t", client=FakeListClient([])
+    ) is None
+    assert pr_backstop.find_pr(
+        branch="b", repo="r/r", token="t", client=FakeListClient(status=404)
+    ) is None
+
+
+def test_check_pr_discovery_uses_render_branch(monkeypatch):
+    """discover_branch: find via list endpoint, then verify the found PR."""
+    branch = EXPECTED["branch"]
+    client = FakeApiClient(pr=dict(EXPECTED))
+    # Route the list call through a client that answers both shapes.
+    list_client = FakeListClient(
+        [{"html_url": PR_URL, "head": {"ref": branch}}]
+    )
+
+    class Both:
+        def request(self, method, url, **kwargs):
+            if url.endswith("/pulls"):
+                return list_client.request(method, url, **kwargs)
+            return client.request(method, url, **kwargs)
+
+    result = pr_backstop.check_pr(
+        pr_url=None,
+        verify_result={"kind": "FP"},
+        token="tok",
+        client=Both(),
+        discover_branch=True,
+        pr_owner="acme",
+    )
+    assert result.ok
+    assert result.pr_url == PR_URL
+    assert list_client.requests[0]["params"]["state"] == "open"

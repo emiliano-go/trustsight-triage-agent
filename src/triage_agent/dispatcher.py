@@ -38,7 +38,12 @@ class HttpClient(Protocol):
 
 @dataclass
 class Deduper:
-    """Hashes of alert blocks already enqueued, per process run."""
+    """In-memory fast path of hashes already handled this process run.
+
+    The authoritative dedupe store is the queue DB's ``seen_events`` table
+    (checked in :func:`poll_once`), so a dispatcher restart does not
+    re-enqueue events that were fully processed.
+    """
 
     seen: set[str] = field(default_factory=set)
 
@@ -61,14 +66,26 @@ def event_digest(payload: dict) -> str:
 
 
 def job_payload(entry: dict) -> dict:
-    """Canonical payload for one (package, version transition) job."""
+    """Canonical payload for one (package, version transition) job.
 
+    The feed sink's over_threshold entries name the AUR page ``aur`` and
+    the transition ``version`` ("old -> new"); local fixtures use
+    ``aur_url``/``old_version``/``new_version``. Accept both.
+    """
+
+    old_v = entry.get("old_version")
+    new_v = entry.get("new_version")
+    version = entry.get("version") or ""
+    if (old_v is None or new_v is None) and " -> " in version:
+        old_v, new_v = (part.strip() for part in version.split(" -> ", 1))
     return {
         "package": entry["package"],
-        "old_version": entry.get("old_version"),
-        "new_version": entry.get("new_version"),
-        "aur_url": entry.get("aur_url"),
+        "old_version": old_v,
+        "new_version": new_v,
+        "aur_url": entry.get("aur_url") or entry.get("aur"),
         "rules": entry.get("rules", []),
+        "findings": entry.get("findings", []),
+        "alert_slug": entry.get("alert_slug", ""),
     }
 
 
@@ -140,7 +157,12 @@ def poll_once(
         digest = event_digest(payload)
         if not deduper.mark_and_is_new(digest):
             continue
-        for entry in payload.get("over_threshold", []):
+        if queue.has_seen_event(digest):
+            # Restart path: this event was fully processed by a previous
+            # dispatcher run. Backfill the in-memory set and skip it.
+            continue
+        entries = payload.get("over_threshold", [])
+        for entry in entries:
             if not isinstance(entry, dict) or "package" not in entry:
                 log.warning("over_threshold entry missing package: %r", entry)
                 continue
@@ -152,6 +174,10 @@ def poll_once(
             if created:
                 log.info("enqueued %s job %s for %s", kind, job.id, job.package)
                 yield job.id, job.package
+        # Mark the event seen only after its entries were processed; any
+        # partial failure is still covered by the jobs.content_hash UNIQUE
+        # constraint on the next poll.
+        queue.mark_seen_event(digest)
 
 
 def run_forever(

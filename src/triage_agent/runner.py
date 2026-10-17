@@ -5,8 +5,9 @@ against the schema, mirroring the harness fp_agent caps: total document at
 most 1 MiB, strings at most 4096 chars, package names matching the AUR-safe
 regex. ``run_job`` then verifies the verdict through the harness CLI
 (``harness fp_agent_verify``); the actual agent execution happens behind the
-``RunnerBackend`` protocol, with a local stub backend for tests until the
-container backend lands.
+``RunnerBackend`` protocol: ``docker_backend.DockerBackend`` runs the real
+agent in a sandboxed container in production, with local stub/replay
+backends for tests and dry runs.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ from typing import Protocol
 MAX_VERDICT_BYTES = 1 << 20  # 1 MiB
 MAX_STRING = 4096
 _PACKAGE_RE = re.compile(r"^[A-Za-z0-9@_+][A-Za-z0-9@._+-]{0,254}$")
+_ALERT_SLUG_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}/\d{6}(?:-[A-Za-z0-9_-]+)?\Z"
+)
 
 VERDICTS = ("FP", "TP", "uncertain")
 CONFIDENCES = ("high", "medium", "low")
@@ -89,6 +93,20 @@ def validate_verdict(doc: object, *, max_bytes: int = MAX_VERDICT_BYTES) -> dict
     for key in ("findings", "ioc_entries"):
         if key in doc and not isinstance(doc[key], list):
             raise VerdictError(f"{key} must be a list")
+    if "alert_slug" in doc:
+        slug = _check_string(doc["alert_slug"], "alert_slug")
+        if not _ALERT_SLUG_RE.match(slug):
+            raise VerdictError(f"invalid alert_slug: {slug!r}")
+    if "ioc_entries" in doc and not doc["ioc_entries"]:
+        raise VerdictError("ioc_entries must not be empty; omit the key")
+    if "findings" in doc:
+        for index, item in enumerate(doc["findings"]):
+            if not isinstance(item, dict):
+                raise VerdictError(
+                    f"findings[{index}] must be an object with rule_id"
+                )
+            if not isinstance(item.get("rule_id"), str):
+                raise VerdictError(f"findings[{index}] missing rule_id")
 
     def walk(value: object, where: str) -> None:
         if isinstance(value, str):
@@ -132,7 +150,7 @@ class RunOutcome:
 
 
 class RunnerBackend(Protocol):
-    """How the agent actually executes. The container backend comes later."""
+    """How the agent actually executes. Production: DockerBackend."""
 
     def run(self, *, prompt: str, job_id: str, job_root: str) -> Path:
         """Run the agent for one job; return the verdict.json path it wrote."""

@@ -111,10 +111,18 @@ class Settings:
     feed_key: str | None = None
     feed_key_id: str = "triage-agent"
     github_token: str | None = None
-    model: str = "opencode/MiMo-V2.6-Flash"
+    model: str = "opencode/mimo-v2.6-flash-free"
     job_root: str = "/job"
     harness_cli: str = "harness"
     harness_timeout_seconds: int = 900
+    stale_job_seconds: int = 1800
+    worker_poll_seconds: int = 30
+    job_timeout_seconds: int = 3600
+    triage_image: str = "trustsight-triage-agent:live"
+    docker_network: str | None = None
+    docker_memory_mb: int | None = None
+    docker_cpus: float | None = None
+    github_owner: str | None = None
     warp: WarpSettings = field(default_factory=WarpSettings)
 
     def __post_init__(self) -> None:
@@ -157,24 +165,47 @@ class Settings:
             feed_key_id=e.get("TRUSTSIGHT_FEED_KEY_ID", "triage-agent").strip()
             or "triage-agent",
             github_token=_optional(e, "GITHUB_PERSONAL_ACCESS_TOKEN"),
-            model=e.get("TRIAGE_MODEL", "opencode/MiMo-V2.6-Flash").strip()
-            or "opencode/MiMo-V2.6-Flash",
+            model=e.get("TRIAGE_MODEL", "opencode/mimo-v2.6-flash-free").strip()
+            or "opencode/mimo-v2.6-flash-free",
             job_root=e.get("TRIAGE_JOB_ROOT", "/job").strip() or "/job",
             harness_cli=e.get("TRIAGE_HARNESS_CLI", "harness").strip() or "harness",
             harness_timeout_seconds=_int(
                 e, "TRIAGE_HARNESS_TIMEOUT_SECONDS", 900, minimum=1
             ),
+            stale_job_seconds=_int(
+                e, "TRIAGE_STALE_JOB_SECONDS", 1800, minimum=1
+            ),
+            worker_poll_seconds=_int(
+                e, "TRIAGE_WORKER_POLL_SECONDS", 30, minimum=1
+            ),
+            job_timeout_seconds=_int(
+                e, "TRIAGE_JOB_TIMEOUT_SECONDS", 3600, minimum=1
+            ),
+            triage_image=e.get("TRIAGE_IMAGE", "").strip()
+            or "trustsight-triage-agent:live",
+            docker_network=_optional(e, "TRIAGE_DOCKER_NETWORK"),
+            docker_memory_mb=_int(e, "TRIAGE_DOCKER_MEMORY_MB", 0, minimum=0)
+            or None,
+            docker_cpus=_float(e, "TRIAGE_DOCKER_CPUS", 0.0, minimum=0.0)
+            or None,
+            github_owner=_optional(e, "TRIAGE_GITHUB_OWNER"),
             warp=warp,
         )
 
     def require_job_secrets(self) -> None:
-        """Secrets only a real job run needs (not unit tests, not dry runs)."""
+        """Secrets a real job run needs (not unit tests, not dry runs).
+
+        Only the GitHub token is required up front: it gates the agent's PR
+        step and the PR backstop. ``TRUSTSIGHT_FEED_KEY`` is needed solely
+        to sign feed-sink alerts, and :func:`special_alert.send_alert`
+        already skips the signed feed sink when it is absent, so its lack
+        must not stop FP-only runs.
+        """
 
         missing = [
             name
             for name, value in (
                 ("GITHUB_PERSONAL_ACCESS_TOKEN", self.github_token),
-                ("TRUSTSIGHT_FEED_KEY", self.feed_key),
             )
             if not value
         ]

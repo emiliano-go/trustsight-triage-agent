@@ -1,7 +1,9 @@
 """In-process localhost HTTP stubs, reusable by tests and ``scripts/dry_run.py``.
 
 ``GitHubApiStub`` serves the small slice of the GitHub REST API the PR
-backstop uses: ``GET`` and ``PATCH /repos/{owner}/{repo}/pulls/{number}``.
+backstop uses: ``GET`` and ``PATCH /repos/{owner}/{repo}/pulls/{number}``
+plus ``GET /repos/{owner}/{repo}/pulls`` (the list endpoint, honoring the
+``state`` and ``head`` query filters for PR discovery by branch).
 ``AlertSinkStub`` accepts any POST (the ntfy webhook shape) and records it.
 Both run on 127.0.0.1 port 0 in a daemon thread and are context managers.
 """
@@ -9,10 +11,14 @@ Both run on 127.0.0.1 port 0 in a daemon thread and are context managers.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 MAX_BODY_BYTES = 1 << 20
+
+_PULLS_LIST_RE = re.compile(r"\A/repos/[^/]+/[^/]+/pulls\Z")
 
 
 class GitHubApiStub:
@@ -21,6 +27,9 @@ class GitHubApiStub:
     Args:
         pr: The PR payload GET returns and PATCH mutates (``state`` set to
             ``closed`` on PATCH).
+        pulls: PR payloads for the list endpoint (discovery by branch).
+            Each may carry ``head: {"ref": branch}``; the ``head`` query
+            filter matches on that ref (``owner:branch`` or bare branch).
         status: HTTP status GET answers with (use 404 to simulate a missing
             PR); PATCH always answers 200.
     """
@@ -29,12 +38,14 @@ class GitHubApiStub:
         self,
         *,
         pr: dict | None = None,
+        pulls: list | None = None,
         status: int = 200,
         owner: str = "acme",
         repo: str = "trustsight",
         number: int = 42,
     ):
         self.pr = pr if pr is not None else {}
+        self.pulls = pulls
         self.status = status
         self.owner = owner
         self.repo = repo
@@ -45,6 +56,10 @@ class GitHubApiStub:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - stdlib name
                 stub._record("GET", self)
+                parsed = urlparse(self.path)
+                if _PULLS_LIST_RE.match(parsed.path):
+                    self._reply(200, stub._list_pulls(parsed.query))
+                    return
                 if stub.status != 200:
                     self._reply(stub.status, {"message": "Not Found"})
                     return
@@ -76,6 +91,20 @@ class GitHubApiStub:
 
     def _record(self, method: str, handler: BaseHTTPRequestHandler) -> None:
         self.requests.append({"method": method, "path": handler.path})
+
+    def _list_pulls(self, query: str) -> list:
+        if self.pulls is None:
+            return []
+        head = parse_qs(query).get("head", [None])[0]
+        if not head:
+            return list(self.pulls)
+        branch = head.rsplit(":", 1)[-1]
+        return [
+            p
+            for p in self.pulls
+            if p.get("head", {}).get("ref") == branch
+            or p.get("head", {}).get("ref") == head
+        ]
 
     @property
     def url(self) -> str:

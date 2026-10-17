@@ -26,18 +26,33 @@ services:
       context: ..
       dockerfile: trustsight-triage-agent/Dockerfile
     image: trustsight-triage-agent:latest
-    user: "triage"
+    # No `user:` on purpose: the container starts as root so the
+    # entrypoint can bootstrap WARP (warp-svc needs root for the TUN
+    # device and its state dir) and create the job user's $HOME, then
+    # setpriv-drops to the unprivileged `triage` user before exec'ing the
+    # command. The job itself never runs as root (docker/entrypoint.sh).
     read_only: true
     tmpfs:
       - /tmp
       # warp-svc keeps its registration state here; on the read-only root
       # it must live on a tmpfs (fresh, anonymous consumer per container).
       - /var/lib/cloudflare-warp
+      # warp-svc's control socket lives here.
+      - /run
+    devices:
+      # WARP's wireguard tunnel needs the TUN device; only meaningful
+      # when ENABLE_WARP_ROTATION=1.
+      - /dev/net/tun:/dev/net/tun
     cap_drop:
       - ALL
     cap_add:
-      # Job service only: WARP's wireguard tunnel needs TUN device
-      # management. Irrelevant (and droppable) when warp rotation is off.
+      # Root-bootstrap only: the entrypoint needs to chown the job user's
+      # $HOME and setpriv-drop to it; these clear at the drop. NET_ADMIN
+      # is for WARP's wireguard tunnel (TUN device), irrelevant (and
+      # droppable) when warp rotation is off.
+      - CHOWN
+      - SETUID
+      - SETGID
       - NET_ADMIN
     security_opt:
       - no-new-privileges:true
@@ -59,5 +74,48 @@ services:
       - triage-jobs:/job
     restart: unless-stopped
 
+  # ------------------------------------------------------------------
+  # The worker is intentionally NOT defined as a compose service.
+  #
+  # triage-agent worker spawns one sandboxed container per job through the
+  # docker CLI, which requires the docker socket. Mounting
+  # /var/run/docker.sock into a container grants that container (and
+  # anything that compromises it) full control of the docker host: it can
+  # create privileged containers, read any other container's files, and
+  # take over the machine. There is no read-only or otherwise safe mode for
+  # the docker socket. That is a much weaker security posture than the job
+  # sandbox this repo builds everywhere else, so the supported deployment
+  # is:
+  #
+  #   - the DISPATCHER runs containerized (this compose file), and
+  #   - the WORKER runs on the docker host itself (a systemd unit, or a
+  #     plain process under runit/supervisord) as an unprivileged user,
+  #     keeping the queue DB on a host path both processes can reach:
+  #
+  #       /etc/systemd/system/triage-worker.service:
+  #         [Service]
+  #         User=triage
+  #         EnvironmentFile=-/etc/triage-agent/worker.env
+  #         ExecStart=/usr/local/bin/triage-agent-worker worker \
+  #             --db /var/lib/triage-agent/triage.sqlite3
+  #         Restart=on-failure
+  #
+  #   Job containers remain fully sandboxed: no host paths, no socket,
+  #   read-only rootfs, dropped capabilities, network none (or a
+  #   TRIAGE_DOCKER_NETWORK you pre-configure with an egress allowlist).
+  #
+  # If you accept the socket risk anyway (single-tenant throwaway host),
+  # the minimal service would be:
+  #
+  #   worker:
+  #     image: trustsight-triage-agent:latest
+  #     command: ["triage-agent", "worker", "--db", "/data/triage.sqlite3"]
+  #     volumes:
+  #       - /var/run/docker.sock:/var/run/docker.sock   # DANGER: root-equivalent
+  #       - triage-queue:/data
+  #     # ...same env as triage-agent...
+  # ------------------------------------------------------------------
+
 volumes:
   triage-jobs:
+  triage-queue:

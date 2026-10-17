@@ -1,13 +1,13 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/MiMo-V2.6-Flash",
+  "model": "opencode/mimo-v2.6-flash-free",
   "agent": {
     "triage": {
       "mode": "primary",
-      "model": "opencode/MiMo-V2.6-Flash",
+      "model": "opencode/mimo-v2.6-flash-free",
       "fallback_models": [
-        "opencode/grok-code",
-        "opencode/kimi-k2-thinking"
+        "opencode/glm-5.3-flash-free",
+        "opencode/nemotron-3.5-lightning-free"
       ],
       "tools": {
         "bash": false,
@@ -33,6 +33,13 @@
         "repos:contents,repos:pull_requests"
       ],
       "enabled": true
+    }
+  },
+  "provider": {
+    "opencode": {
+      "options": {
+        "apiKey": "{env:OPENCODE_API_KEY}"
+      }
     }
   }
 }

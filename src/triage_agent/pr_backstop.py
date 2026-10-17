@@ -37,6 +37,7 @@ class BackstopError(RuntimeError):
 class BackstopResult:
     ok: bool
     reason: str | None = None
+    pr_url: str | None = None
 
 
 class HttpClient(Protocol):
@@ -100,9 +101,52 @@ def _check_size(resp: httpx.Response) -> None:
         raise BackstopError("GitHub API response exceeds size cap")
 
 
+def find_pr(
+    *,
+    branch: str,
+    repo: str,
+    token: str,
+    client: HttpClient,
+    api_base: str = API_BASE,
+    timeout: float = 30.0,
+    head_owner: str | None = None,
+) -> str | None:
+    """Discover the open PR for *branch* via the pulls list endpoint.
+
+    *repo* is the full ``owner/name`` the PR targets. GitHub's ``head``
+    filter wants ``owner:branch``; when *head_owner* is unknown the bare
+    branch is passed, which the API and the offline stub both accept.
+    Returns the PR's html_url, or None when no open PR matches.
+    """
+
+    head = f"{head_owner}:{branch}" if head_owner else branch
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    resp = client.request(
+        "GET",
+        f"{api_base}/repos/{repo}/pulls",
+        params={"state": "open", "head": head},
+        headers=headers,
+        timeout=timeout,
+    )
+    _check_size(resp)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    items = resp.json()
+    if not isinstance(items, list) or not items:
+        return None
+    first = items[0]
+    if not isinstance(first, dict):
+        return None
+    return first.get("html_url")
+
+
 def check_pr(
     *,
-    pr_url: str,
+    pr_url: str | None,
     verify_result: dict,
     token: str | None,
     client: HttpClient | None = None,
@@ -111,21 +155,60 @@ def check_pr(
     target_repo: str = "trustsight",
     day: str | None = None,
     api_base: str = API_BASE,
+    discover_branch: bool = False,
+    pr_owner: str | None = None,
 ) -> BackstopResult:
     """Fetch the PR, compare title and body against the harness render.
 
     Never raises: every failure mode returns ``BackstopResult(ok=False)``.
-    A missing PR (the agent never opened one) fails with reason
-    ``no PR found``.
+    When *pr_url* is None and *discover_branch* is set, the PR is located
+    through the pulls list endpoint by the branch of the harness render
+    (the agent opens the PR itself and only GitHub knows its URL).
     """
 
     if not token:
         return BackstopResult(False, "github token not configured")
     try:
-        owner, repo, number = parse_pr_url(pr_url)
-        expected = harness_render_pr(
-            verify_result, target_repo=target_repo, day=day, cli=cli
-        )
+        if pr_url is not None:
+            owner, repo, number = parse_pr_url(pr_url)
+            expected = harness_render_pr(
+                verify_result, target_repo=target_repo, day=day, cli=cli
+            )
+        else:
+            if not discover_branch:
+                return BackstopResult(False, "no PR URL and discovery disabled")
+            expected = harness_render_pr(
+                verify_result, target_repo=target_repo, day=day, cli=cli
+            )
+            branch = expected.get("branch")
+            if not branch:
+                return BackstopResult(False, "harness render has no branch")
+            if client is None:
+                with httpx.Client() as http:
+                    pr_url = find_pr(
+                        branch=branch,
+                        repo=f"{pr_owner}/{target_repo}" if pr_owner
+                        else target_repo,
+                        token=token,
+                        client=http,
+                        api_base=api_base,
+                        timeout=timeout,
+                        head_owner=pr_owner,
+                    )
+            else:
+                pr_url = find_pr(
+                    branch=branch,
+                    repo=f"{pr_owner}/{target_repo}" if pr_owner
+                    else target_repo,
+                    token=token,
+                    client=client,
+                    api_base=api_base,
+                    timeout=timeout,
+                    head_owner=pr_owner,
+                )
+            if pr_url is None:
+                return BackstopResult(False, "no PR found")
+            owner, repo, number = parse_pr_url(pr_url)
     except Exception as exc:
         return BackstopResult(False, f"backstop setup: {exc}")
 
@@ -136,13 +219,17 @@ def check_pr(
     api_url = f"{api_base}/repos/{owner}/{repo}/pulls/{number}"
     try:
         if client is not None:
-            return _verify_pr(http=client, api_url=api_url, headers=headers,
-                              expected=expected, timeout=timeout)
-        with httpx.Client() as http:
-            return _verify_pr(http=http, api_url=api_url, headers=headers,
-                              expected=expected, timeout=timeout)
+            result = _verify_pr(http=client, api_url=api_url, headers=headers,
+                                expected=expected, timeout=timeout)
+        else:
+            with httpx.Client() as http:
+                result = _verify_pr(http=http, api_url=api_url, headers=headers,
+                                    expected=expected, timeout=timeout)
     except Exception as exc:
         return BackstopResult(False, f"github api: {exc}")
+    if result.ok:
+        return BackstopResult(True, pr_url=pr_url)
+    return result
 
 
 def _verify_pr(

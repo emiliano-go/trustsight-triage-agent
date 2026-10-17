@@ -6,13 +6,18 @@ the GitHub MCP tools), verdict validation and harness verification, then the
 post-verification stages:
 
 - FP: the PR backstop re-fetches the opened PR and compares it against the
-  ``harness fp_agent_pr`` render; a mismatch closes the PR and fails the
-  job; a missing PR fails the job too.
+  ``harness fp_agent_pr`` render; the PR URL comes from the backend's
+  ``last_pr_url`` (the agent's /job/pr_url artifact) when known, otherwise
+  the backstop discovers it via the pulls list endpoint by the rendered
+  branch; a mismatch closes the PR and fails the job; a missing PR fails
+  the job too.
 - TP: the confirmed-IOC alert (from ``harness fp_agent_alert``) is
   delivered through :mod:`special_alert`.
 
 The PR URL the agent produced is read off the backend as ``last_pr_url``
-when it exposes one; otherwise the job fails with ``no PR found``.
+when it exposes one (the in-container agent writes a /job/pr_url
+artifact); otherwise the backstop discovers the PR by the rendered branch
+through the GitHub pulls list endpoint.
 """
 
 from __future__ import annotations
@@ -55,7 +60,8 @@ def process_job(
     try:
         queue.transition(job_id, "running")
     except TransitionError:
-        pass  # already claimed
+        if queue.get(job_id).status != "running":
+            return PipelineOutcome(status="failed", reason="job not claimable")
 
     prompt = build_prompt(payload)
     outcome = runner.run_job(
@@ -96,23 +102,23 @@ def process_job(
 
     if kind == "FP":
         pr_url = getattr(backend, "last_pr_url", None)
-        if not pr_url:
-            reason = "no PR found: agent did not report opening one"
-            queue.transition(job_id, "failed", error=reason)
-            return PipelineOutcome(status="failed", reason=reason)
         check = backstop(
             pr_url=pr_url,
             verify_result=result,
             token=getattr(settings, "github_token", None),
             client=http_client,
             cli=cli,
+            discover_branch=pr_url is None,
+            pr_owner=getattr(settings, "github_owner", None),
         )
         if not check.ok:
             reason = f"PR backstop: {check.reason}"
             queue.transition(job_id, "failed", error=reason)
             return PipelineOutcome(status="failed", reason=reason, pr_url=pr_url)
-        queue.transition(job_id, "pr_opened", pr_url=pr_url)
-        return PipelineOutcome(status="pr_opened", pr_url=pr_url)
+        queue.transition(job_id, "pr_opened", pr_url=check.pr_url or pr_url)
+        return PipelineOutcome(
+            status="pr_opened", pr_url=check.pr_url or pr_url
+        )
 
     reason = f"unsupported verified kind: {kind!r}"
     queue.transition(job_id, "failed", error=reason)

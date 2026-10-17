@@ -44,9 +44,10 @@ def _verify_tp(verdict, **kwargs):
 
 
 class _BackstopResult:
-    def __init__(self, ok, reason):
+    def __init__(self, ok, reason, pr_url=None):
         self.ok = ok
         self.reason = reason
+        self.pr_url = pr_url
 
 
 def test_fp_happy_path(tmp_path, queue, alerts_event):
@@ -147,9 +148,49 @@ def test_no_pr_fails_job(tmp_path, queue, alerts_event):
         queue=queue,
         backend=LocalStubBackend(),
         verify=_verify_fp,
+        backstop=lambda **k: _BackstopResult(False, "no PR found"),
     )
     assert outcome.status == "failed"
     assert "no PR found" in outcome.reason
+
+
+def test_fp_discovers_pr_by_branch(tmp_path, queue, alerts_event,
+                                   monkeypatch):
+    """No last_pr_url: the backstop finds the PR via the pulls list endpoint."""
+    import httpx
+
+    from tests.stub_github import GitHubApiStub
+    from triage_agent import pr_backstop
+
+    branch = "triage/fp-hello-aur-deadbeef"
+    with GitHubApiStub(pr={"title": "t", "body": "b"}, pulls=[
+        {"html_url": PR_URL, "title": "t", "body": "b",
+         "head": {"ref": branch}},
+    ]) as github:
+        monkeypatch.setattr(
+            pr_backstop, "harness_render_pr",
+            lambda *a, **k: {"branch": branch, "title": "t", "body": "b"},
+        )
+        job, payload = _enqueue(queue, alerts_event)
+        settings = Settings(
+            job_root=str(tmp_path / "jobs"), github_token="tok",
+            github_owner="acme",
+        )
+        outcome = pipeline.process_job(
+            job_id=job.id,
+            payload=payload,
+            settings=settings,
+            queue=queue,
+            backend=LocalStubBackend(),  # no last_pr_url
+            verify=_verify_fp,
+            backstop=lambda **k: pr_backstop.check_pr(
+                api_base=github.api_base, **k
+            ),
+            http_client=httpx.Client(),
+        )
+    assert outcome.status == "pr_opened"
+    assert outcome.pr_url == PR_URL
+    assert queue.get(job.id).pr_url == PR_URL
 
 
 def test_backstop_mismatch_fails_job(tmp_path, queue, alerts_event):

@@ -75,8 +75,12 @@ ENV PATH="/app/trustsight-harness/.venv/bin:/app/trustsight-triage-agent/.venv/b
 RUN useradd --create-home --shell /usr/sbin/nologin triage \
     && mkdir -p /job \
     && chown -R triage:triage /job /app/trustsight-triage-agent
-ENV HOME=/home/triage
-USER triage
+ENV HOME=/tmp/home
+# Root on purpose: docker/entrypoint.sh runs the privileged bootstrap
+# (warp-svc needs the TUN device and root state) and setpriv-drops to the
+# unprivileged `triage` user before exec'ing the job. The job never runs
+# as root; do not add -u/--user overrides (they would skip the drop).
+USER root
 
 COPY trustsight-triage-agent/docker/entrypoint.sh /usr/local/bin/triage-entrypoint
 ENTRYPOINT ["triage-entrypoint"]

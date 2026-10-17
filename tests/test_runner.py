@@ -162,6 +162,20 @@ class TestRunJob:
         outcome = run(tmp_path, LocalStubBackend(verdict))
         assert outcome.outcome == "verified"
 
+    def test_invalid_alert_slug_fails_before_verify(self, tmp_path):
+        verdict = valid_verdict()
+        verdict["alert_slug"] = "made-up-slug"
+        outcome = run(tmp_path, LocalStubBackend(verdict))
+        assert outcome.outcome == "failed"
+        assert "invalid alert_slug" in (outcome.reason or "")
+
+    def test_empty_ioc_entries_fails_before_verify(self, tmp_path):
+        verdict = valid_verdict()
+        verdict["ioc_entries"] = []
+        outcome = run(tmp_path, LocalStubBackend(verdict))
+        assert outcome.outcome == "failed"
+        assert "ioc_entries" in (outcome.reason or "")
+
     def test_findings_must_be_a_list(self, tmp_path):
         verdict = valid_verdict()
         verdict["findings"] = {"rule_id": "H020"}
@@ -196,3 +210,17 @@ def test_harness_verify_cli_invocation(monkeypatch, tmp_path):
         assert calls["kwargs"]["timeout"] == 5
         assert not Path(calls["verdict_path"]).exists()
         assert calls["sent"]["package"] == "hello-aur"
+
+
+def test_findings_items_must_be_objects(tmp_path):
+    verdict = valid_verdict()
+    verdict["findings"] = ["just a string"]
+    outcome = run_job(
+        job_id="j1",
+        prompt="p",
+        job_root=str(tmp_path),
+        backend=LocalStubBackend(verdict),
+        verify=lambda v, **k: {"verified": True, "kind": "FP"},
+    )
+    assert outcome.outcome == "failed"
+    assert "findings[0] must be an object" in (outcome.reason or "")

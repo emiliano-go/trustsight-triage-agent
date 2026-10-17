@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     package TEXT NOT NULL,
     status TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'triage',
+    payload TEXT,
     verdict_path TEXT,
     pr_url TEXT,
     error TEXT,
@@ -35,6 +36,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE TABLE IF NOT EXISTS seen_events (
+    content_hash TEXT PRIMARY KEY,
+    first_seen_at REAL NOT NULL
+);
 """
 
 STATUSES = (
@@ -120,11 +125,19 @@ class Job:
     package: str
     status: str
     kind: str
+    payload: str | None
     verdict_path: str | None
     pr_url: str | None
     error: str | None
     created_at: float
     updated_at: float
+
+    def payload_dict(self) -> dict | None:
+        """The enqueue-time payload, or None for pre-migration rows."""
+
+        if not self.payload:
+            return None
+        return json.loads(self.payload)
 
 
 def _row_to_job(row: sqlite3.Row) -> Job:
@@ -134,6 +147,7 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         package=row["package"],
         status=row["status"],
         kind=row["kind"],
+        payload=row["payload"],
         verdict_path=row["verdict_path"],
         pr_url=row["pr_url"],
         error=row["error"],
@@ -150,6 +164,14 @@ class JobQueue:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the first schema version."""
+
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)")}
+        if "payload" not in cols:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN payload TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -179,8 +201,18 @@ class JobQueue:
             with self._conn:
                 self._conn.execute(
                     "INSERT INTO jobs (id, content_hash, package, status, kind,"
-                    " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                    (job_id, digest, package, "queued", kind, now, now),
+                    " payload, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        job_id,
+                        digest,
+                        package,
+                        "queued",
+                        kind,
+                        json.dumps(payload, sort_keys=True),
+                        now,
+                        now,
+                    ),
                 )
         except sqlite3.IntegrityError:
             row = self._conn.execute(
@@ -243,12 +275,46 @@ class JobQueue:
             if row is None:
                 return None
             job_id = row["id"]
-            self._conn.execute(
+            cur = self._conn.execute(
                 "UPDATE jobs SET status = 'running', updated_at = ? WHERE id = ?"
                 " AND status = 'queued'",
                 (time.time(), job_id),
             )
+            if cur.rowcount == 0:
+                # Another connection claimed it between our SELECT and UPDATE.
+                return None
         return self.get(job_id)
+
+    def requeue_stale(self, max_age_seconds: float, *, now: float | None = None) -> int:
+        """Move ``running`` jobs older than *max_age_seconds* back to ``queued``.
+
+        Runs at dispatcher startup so jobs left ``running`` by a crash or
+        kill are picked up again instead of wedging the queue. Returns the
+        number of jobs requeued.
+        """
+
+        cutoff = (time.time() if now is None else now) - max_age_seconds
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE jobs SET status = 'queued', updated_at = ?"
+                " WHERE status = 'running' AND updated_at < ?",
+                (time.time() if now is None else now, cutoff),
+            )
+        return cur.rowcount
+
+    def has_seen_event(self, digest: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM seen_events WHERE content_hash = ?", (digest,)
+        ).fetchone()
+        return row is not None
+
+    def mark_seen_event(self, digest: str, *, now: float | None = None) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO seen_events (content_hash, first_seen_at)"
+                " VALUES (?, ?)",
+                (digest, time.time() if now is None else now),
+            )
 
     def get(self, job_id: str) -> Job:
         row = self._conn.execute(
@@ -263,3 +329,12 @@ class JobQueue:
             "SELECT * FROM jobs WHERE status = ? ORDER BY created_at", (status,)
         ).fetchall()
         return [_row_to_job(r) for r in rows]
+
+    def counts(self) -> dict[str, int]:
+        """Job count per status, including statuses with zero jobs."""
+
+        rows = self._conn.execute(
+            "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status"
+        ).fetchall()
+        by_name = {r["status"]: r["n"] for r in rows}
+        return {status: by_name.get(status, 0) for status in STATUSES}
