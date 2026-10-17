@@ -70,6 +70,8 @@ services:
       TRIAGE_MODEL_REASONING: ${TRIAGE_MODEL_REASONING:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Zen (opencode) route key; required for the default "zen" profile.
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
       # Explicit path: never rely on PATH alone for the harness CLI.
       TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
@@ -122,6 +124,8 @@ services:
       TRIAGE_MODEL_REASONING: ${TRIAGE_MODEL_REASONING:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Zen (opencode) route key; required for the default "zen" profile.
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
       TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
       # Job containers are spawned from this image; keep it identical to
       # the image tag compose just built.

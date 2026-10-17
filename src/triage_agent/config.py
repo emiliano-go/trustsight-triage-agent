@@ -111,6 +111,7 @@ class Settings:
     feed_key: str | None = None
     feed_key_id: str = "triage-agent"
     github_token: str | None = None
+    opencode_api_key: str | None = None
     model: str = "opencode/mimo-v2.6-flash-free"
     model_profile: str = "zen"
     model_explicit: bool = False
@@ -173,6 +174,7 @@ class Settings:
             feed_key_id=e.get("TRUSTSIGHT_FEED_KEY_ID", "triage-agent").strip()
             or "triage-agent",
             github_token=_optional(e, "GITHUB_PERSONAL_ACCESS_TOKEN"),
+            opencode_api_key=_optional(e, "OPENCODE_API_KEY"),
             model=e.get("TRIAGE_MODEL", "opencode/mimo-v2.6-flash-free").strip()
             or "opencode/mimo-v2.6-flash-free",
             model_profile=e.get("TRIAGE_MODEL_PROFILE", "zen").strip() or "zen",
@@ -206,20 +208,19 @@ class Settings:
     def require_job_secrets(self) -> None:
         """Secrets a real job run needs (not unit tests, not dry runs).
 
-        Only the GitHub token is required up front: it gates the agent's PR
-        step and the PR backstop. ``TRUSTSIGHT_FEED_KEY`` is needed solely
+        Only the GitHub token is universally required: it gates the agent's
+        PR step and the PR backstop. ``TRUSTSIGHT_FEED_KEY`` is needed solely
         to sign feed-sink alerts, and :func:`special_alert.send_alert`
         already skips the signed feed sink when it is absent, so its lack
-        must not stop FP-only runs.
+        must not stop FP-only runs. The zen model profile additionally needs
+        ``OPENCODE_API_KEY`` (OpenCode Zen route); without it the job
+        containers come up but every model call fails server-side.
         """
 
-        missing = [
-            name
-            for name, value in (
-                ("GITHUB_PERSONAL_ACCESS_TOKEN", self.github_token),
-            )
-            if not value
-        ]
+        required = [("GITHUB_PERSONAL_ACCESS_TOKEN", self.github_token)]
+        if self.model_profile == "zen":
+            required.append(("OPENCODE_API_KEY", self.opencode_api_key))
+        missing = [name for name, value in required if not value]
         if missing:
             raise ConfigError(
                 "missing required job secrets: " + ", ".join(missing)

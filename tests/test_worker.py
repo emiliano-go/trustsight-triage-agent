@@ -184,6 +184,7 @@ def test_worker_command_runs_with_token(tmp_path, monkeypatch):
     from triage_agent import worker as worker_mod
 
     monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("OPENCODE_API_KEY", "oc_tok")
     calls: list[str] = []
     monkeypatch.setattr(
         worker_mod.Worker, "run_forever", lambda self: calls.append("run")

@@ -94,12 +94,27 @@ def test_job_secrets_enforced():
     with pytest.raises(ConfigError) as exc:
         s.require_job_secrets()
     assert "GITHUB_PERSONAL_ACCESS_TOKEN" in str(exc.value)
+    with pytest.raises(ConfigError) as exc:
+        Settings.from_env(
+            {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x"}
+        ).require_job_secrets()
+    assert "OPENCODE_API_KEY" in str(exc.value)
     ok = Settings.from_env(
         {
             "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x",
+            "OPENCODE_API_KEY": "oc_x",
         }
     )
     ok.require_job_secrets()  # feed key is optional; the feed sink is skipped
+    # Non-zen profiles do not require the Zen key.
+    Settings.from_env(
+        {
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x",
+            "TRIAGE_MODEL_PROFILE": "openai-compatible",
+            "TRIAGE_MODEL_BASE_URL": "http://localhost:11434/v1",
+            "TRIAGE_MODEL_NAME": "qwen2.5-coder",
+        }
+    ).require_job_secrets()
 
 
 def test_docker_host_from_env():
