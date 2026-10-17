@@ -88,7 +88,12 @@ fi
 
 if [ "$(id -u)" = "0" ]; then
     echo "entrypoint: dropping privileges to $JOB_USER for the job"
-    exec setpriv --reuid "$JOB_USER" --regid "$JOB_USER" --clear-groups "$@"
+    # --keep-groups (not --clear-groups): the worker container mounts the
+    # host docker socket and gets access via compose group_add (host docker
+    # gid). Clearing groups here would strip that access from the job user;
+    # job containers give root no extra groups, so keeping them is a no-op
+    # there. Never run the worker with -u/--user: it must reach this drop.
+    exec setpriv --reuid "$JOB_USER" --regid "$JOB_USER" --keep-groups "$@"
 fi
 
 exec "$@"
