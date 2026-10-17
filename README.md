@@ -120,6 +120,11 @@ version.
    container output is handled by the backend itself: fresh containers are
    fresh tmpfs, so re-running *is* the WARP egress rotation (up to
    `TRIAGE_WARP_MAX_ROTATIONS`), followed by one fallback-model run.
+   Successive containers are paced by the shared backoff schedule (30 s
+   doubling to 900 s, jittered), floored by any `Retry-After` hint the
+   provider echoed into the container output: a fresh egress IP does not
+   reset the model-side burst bucket, so rotations back off instead of
+   hammering the gateway.
    `LocalStubBackend` and `ReplayBackend` provide canned verdicts for
    tests and dry runs.
 4. **Verdict validation** (`runner.validate_verdict`). Strict local check

@@ -94,7 +94,10 @@ def make_settings(**over):
 
 def make_backend(tmp_path, settings=None, **fake_kwargs):
     fake = FakeDocker(tmp_path, **fake_kwargs)
-    backend = DockerBackend(settings or make_settings(), runner=fake)
+    # No real sleeping in tests: pacing delays are recorded, not endured.
+    backend = DockerBackend(
+        settings or make_settings(), runner=fake, sleeper=lambda _s: None
+    )
     return backend, fake
 
 

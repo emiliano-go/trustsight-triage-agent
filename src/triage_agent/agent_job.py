@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 
 from .config import WarpSettings
-from .rate_limit import detect_429
+from .rate_limit import detect_429, effective_delay, extract_retry_after
 
 DEFAULT_MODEL = "opencode/mimo-v2.6-flash-free"
 DEFAULT_TIMEOUT = 1200
@@ -192,7 +192,12 @@ def run_with_retries(
             return output, EXIT_RATE_LIMITED if kind == "rate_limited" \
                 else EXIT_FAILURE
         if attempt < MAX_IN_PLACE_RETRIES:
-            delay = schedule.next_delay(attempt)
+            # Floor the schedule delay with any Retry-After hint the provider
+            # echoed into the output; opencode swallows response headers, so
+            # this is best-effort and the schedule is the default.
+            delay = effective_delay(
+                schedule, attempt, extract_retry_after(output)
+            )
             log(f"agent-job: transient failure; retrying in {delay}s",
                 file=sys.stderr)
             sleeper(delay)

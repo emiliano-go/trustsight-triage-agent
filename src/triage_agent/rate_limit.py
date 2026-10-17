@@ -10,6 +10,7 @@ the secondary model, or fail the job.
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -72,6 +73,40 @@ def detect_429(status_or_text: object) -> bool:
         return status_or_text == 429
     text = str(status_or_text).lower()
     return "429" in text or "rate limit" in text
+
+
+_RETRY_AFTER_RE = re.compile(
+    r"retry[-_ ]?after[^0-9]{0,16}(\d{1,6})(?:\s*(?:s|sec|seconds))?\b",
+    re.IGNORECASE,
+)
+#: Zen free-route 429s usually carry no machine-readable Retry-After header
+#: (community-measured ~15-20 RPM burst cap; see the module docstring in
+#: agent_job.py), so this is a best-effort floor parsed from whatever the
+#: provider did echo into the output stream.
+
+
+def extract_retry_after(text: object) -> float | None:
+    """Seconds a provider asked us to wait, parsed from output text.
+
+    Returns the largest ``retry[- ]after <n>`` value found, or None when the
+    output carries no such hint (callers then rely on the BackoffSchedule).
+    """
+
+    if not text:
+        return None
+    values = [int(m) for m in _RETRY_AFTER_RE.findall(str(text))]
+    return float(max(values)) if values else None
+
+
+def effective_delay(
+    schedule: BackoffSchedule, attempt: int, retry_after: float | None
+) -> float:
+    """Backoff delay for *attempt*, floored by a provider Retry-After hint."""
+
+    delay = schedule.next_delay(attempt)
+    if retry_after and retry_after > delay:
+        return retry_after
+    return delay
 
 
 @dataclass(frozen=True)

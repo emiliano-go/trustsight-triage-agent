@@ -9,6 +9,8 @@ from triage_agent.rate_limit import (
     BackoffSchedule,
     RotationPolicy,
     detect_429,
+    effective_delay,
+    extract_retry_after,
 )
 
 
@@ -77,3 +79,24 @@ def test_rotation_policy_budget():
 def test_rotation_policy_validation():
     with pytest.raises(BackoffError):
         RotationPolicy(max_rotations=0)
+
+
+def test_extract_retry_after_parses_seconds_hints():
+    assert extract_retry_after("HTTP 429; retry-after: 42") == 42.0
+    assert extract_retry_after("please retry after 7 seconds") == 7.0
+    assert extract_retry_after('{"retryAfter": 120}') == 120.0
+    # largest hint wins when several appear
+    assert extract_retry_after("retry-after: 10 ... retry after 60s") == 60.0
+    assert extract_retry_after("no hint here") is None
+    assert extract_retry_after("") is None
+    assert extract_retry_after(None) is None
+
+
+def test_effective_delay_floors_schedule_with_retry_after():
+    schedule = BackoffSchedule(rng=lambda: 0.0)
+    # schedule says 30s; provider asked for 90s -> wait 90s
+    assert effective_delay(schedule, 1, 90.0) == 90.0
+    # provider asked for 5s; schedule is the floor -> wait 30s
+    assert effective_delay(schedule, 1, 5.0) == 30.0
+    # no hint -> plain schedule
+    assert effective_delay(schedule, 2, None) == 60.0

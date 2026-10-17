@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 from pathlib import Path
 
 from . import rate_limit
@@ -84,10 +85,12 @@ class DockerBackend:
         *,
         docker: str = "docker",
         runner: object = subprocess.run,
+        sleeper: object = time.sleep,
     ) -> None:
         self.settings = settings
         self.docker = docker
         self._runner = runner
+        self._sleeper = sleeper
         self.image = getattr(settings, "triage_image",
                              "trustsight-triage-agent:live")
         self.network = getattr(settings, "docker_network", None)
@@ -261,7 +264,13 @@ class DockerBackend:
                         # A fresh container is a fresh tmpfs, so WARP
                         # registers an anonymous consumer from scratch:
                         # that is the egress rotation; no warp-cli is
-                        # needed out here.
+                        # needed out here. Pace the rotation: the Zen free
+                        # route caps bursts (~15-20 RPM community-measured)
+                        # and a fresh egress does not reset the model-side
+                        # bucket, so back off between containers instead of
+                        # hammering the gateway, flooring the delay with any
+                        # Retry-After hint the provider echoed.
+                        self._pace_before_retry(rotations_used + 1, output)
                         rotations_used += 1
                         continue
                     if decision.action == "fallback_model":
@@ -271,6 +280,7 @@ class DockerBackend:
                                 " and the fallback model run:"
                                 f" {output.strip()[-REASON_TAIL_BYTES:]}"
                             )
+                        self._pace_before_retry(rotations_used + 1, output)
                         fallback_used = True
                         self.settings = _ModelOverride(
                             original_settings, FALLBACK_MODEL
@@ -284,6 +294,27 @@ class DockerBackend:
                     self._docker(["volume", "rm", "-f", volume])
         finally:
             self.settings = original_settings
+
+    def _pace_before_retry(self, attempt: int, output: str) -> None:
+        """Sleep the shared backoff schedule before starting a new container.
+
+        Uses the WarpSettings schedule (30s doubling to 900s, jittered), so
+        successive rotations naturally slow down; a Retry-After hint in the
+        container output, when present, is a floor for the delay.
+        """
+
+        warp = getattr(self.settings, "warp", None)
+        schedule = (
+            warp.schedule()
+            if warp is not None
+            else rate_limit.BackoffSchedule()
+        )
+        delay = rate_limit.effective_delay(
+            schedule, attempt, rate_limit.extract_retry_after(output)
+        )
+        log.info("pacing %.1fs before retry container (attempt %d)", delay,
+                 attempt)
+        self._sleeper(delay)
 
     def _record_log(self, job_root: str, job_id: str, attempt: int,
                     output: str) -> None:
