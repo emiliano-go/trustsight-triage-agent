@@ -125,7 +125,13 @@ def fetch_events(
     limit: int = DEFAULT_LIMIT,
     timeout: float = 30.0,
 ) -> list[dict]:
-    """One HTTP GET, parsed into trustsight.alerts payloads. Raises on error."""
+    """One HTTP GET, parsed into trustsight.alerts payloads. Raises on error.
+
+    The feed list endpoint serves a compact per-row projection that may omit
+    the ``payload`` block (the sink's ``summarize`` projection); when a row
+    has no embedded ``over_threshold`` block, fall back to the per-message
+    endpoint (``GET {base}/api/messages/{slug}``) and use its payload.
+    """
 
     base = feed_url.rstrip("/")
     resp = client.get(
@@ -134,7 +140,25 @@ def fetch_events(
         timeout=timeout,
     )
     resp.raise_for_status()
-    return rows_from_feed(resp.json())
+    out: list[dict] = []
+    for payload in rows_from_feed(resp.json()):
+        if isinstance(payload.get("over_threshold"), list):
+            out.append(payload)
+            continue
+        slug = payload.get("slug")
+        if not slug:
+            log.warning("feed row without payload or slug: %r",
+                        payload.get("title"))
+            continue
+        full = client.get(f"{base}/api/messages/{slug}", timeout=timeout)
+        full.raise_for_status()
+        body = full.json()
+        full_payload = body.get("payload", body) if isinstance(body, dict) \
+            else None
+        if isinstance(full_payload, dict) \
+                and full_payload.get("event") == EVENT_NAME:
+            out.append(full_payload)
+    return out
 
 
 def poll_once(
@@ -162,18 +186,41 @@ def poll_once(
             # dispatcher run. Backfill the in-memory set and skip it.
             continue
         entries = payload.get("over_threshold", [])
+        valid = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and "package" in entry
+        ]
         for entry in entries:
             if not isinstance(entry, dict) or "package" not in entry:
                 log.warning("over_threshold entry missing package: %r", entry)
-                continue
-            payload_for_job = job_payload(entry)
-            kind = "ioc" if entry.get("ioc_matches") else "triage"
+        if len(valid) > 1:
+            # Multi-package alert: one job covering every flagged package so
+            # verified FPs are suppressed by a single aggregate PR.
+            payload_for_job = {
+                "packages": [job_payload(entry) for entry in valid]
+            }
+            label = f"{valid[0]['package']} (+{len(valid) - 1} more)"
             job, created = queue.enqueue(
-                payload_for_job, package=entry["package"], kind=kind
+                payload_for_job, package=label, kind="triage"
             )
             if created:
-                log.info("enqueued %s job %s for %s", kind, job.id, job.package)
-                yield job.id, job.package
+                log.info(
+                    "enqueued multi-package job %s covering %d packages (%s)",
+                    job.id, len(valid), label,
+                )
+                yield job.id, label
+        else:
+            for entry in valid:
+                payload_for_job = job_payload(entry)
+                kind = "ioc" if entry.get("ioc_matches") else "triage"
+                job, created = queue.enqueue(
+                    payload_for_job, package=entry["package"], kind=kind
+                )
+                if created:
+                    log.info("enqueued %s job %s for %s", kind, job.id,
+                             job.package)
+                    yield job.id, job.package
         # Mark the event seen only after its entries were processed; any
         # partial failure is still covered by the jobs.content_hash UNIQUE
         # constraint on the next poll.

@@ -94,3 +94,57 @@ def test_poll_uses_feed_api_params(queue, alerts_event):
     assert req["url"] == "https://feed.example.org/api/feed"
     assert req["params"] == {"event": "trustsight.alerts", "limit": 50}
     assert req["timeout"] > 0
+
+
+class _RoutingClient:
+    """Fake HTTP client routing /api/feed and /api/messages separately."""
+
+    def __init__(self, feed_body, messages):
+        self._feed_body = feed_body
+        self._messages = messages
+        self.requests = []
+
+    def get(self, url, **kwargs):
+        self.requests.append(url)
+        if "/api/messages/" in url:
+            slug = url.rsplit("/api/messages/", 1)[1]
+            return FakeResponse(self._messages[slug])
+        return FakeResponse(self._feed_body)
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def test_fetch_events_falls_back_to_message_endpoint_for_projection_rows():
+    from triage_agent.dispatcher import fetch_events
+
+    full = {"event": "trustsight.alerts", "alerts": [],
+            "over_threshold": [{"package": "tabctl"}]}
+    client = _RoutingClient(
+        {"items": [{"slug": "2026-10-17/131453", "event": "trustsight.alerts",
+                    "title": "campaign"}]},
+        {"2026-10-17/131453": {"payload": full}},
+    )
+    events = fetch_events(client, "https://feed.example")
+    assert events == [full]
+    assert any("/api/messages/2026-10-17/131453" in u for u in client.requests)
+
+
+def test_fetch_events_keeps_embedded_payload_without_extra_fetch():
+    from triage_agent.dispatcher import fetch_events
+
+    full = {"event": "trustsight.alerts", "alerts": [],
+            "over_threshold": [{"package": "tabctl"}]}
+    client = _RoutingClient(
+        {"items": [{"payload": full}]}, {}
+    )
+    assert fetch_events(client, "https://feed.example") == [full]
+    assert len(client.requests) == 1
