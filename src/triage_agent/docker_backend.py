@@ -54,7 +54,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import rate_limit
+from . import model_backends, rate_limit
 from .queue import write_job_file
 
 log = logging.getLogger(__name__)
@@ -179,12 +179,21 @@ class DockerBackend:
         flags += ["-e", "GITHUB_PERSONAL_ACCESS_TOKEN"]
         # opencode Zen route key; bare name, never a value.
         flags += ["-e", "OPENCODE_API_KEY"]
+        # Model-profile env (endpoint, model, key aliases): whichever are
+        # present in the worker environment pass through by name only, so
+        # secrets never appear in argv, logs, or the image.
+        for name in model_backends.PROFILE_ENV_VARS:
+            if os.environ.get(name, "").strip():
+                flags += ["-e", name]
         feed_url = getattr(self.settings, "feed_url", None)
         if feed_url:
             flags += ["-e", f"TRUSTSIGHT_FEED_URL={feed_url}"]
-        model = getattr(self.settings, "model", None)
-        if model:
-            flags += ["-e", f"TRIAGE_MODEL={model}"]
+        # TRIAGE_MODEL is an explicit operator override of the profile's
+        # model; an unset (default) model must not clobber the profile.
+        if getattr(self.settings, "model_explicit", False):
+            flags += ["-e", f"TRIAGE_MODEL={self.settings.model}"]
+        profile = getattr(self.settings, "model_profile", "zen")
+        flags += ["-e", f"TRIAGE_MODEL_PROFILE={profile}"]
         flags += [
             "-e",
             f"ENABLE_WARP_ROTATION={'1' if self._warp_enabled() else '0'}",
@@ -317,10 +326,24 @@ class DockerBackend:
                         rotations_used += 1
                         continue
                     if decision.action == "fallback_model":
-                        if fallback_used:
+                        # The hardcoded Zen fallback model only makes sense
+                        # for the zen profile; other profiles carry their
+                        # ladder as in-config fallback_models on their own
+                        # endpoint, so the budget exhausts right here.
+                        zen_profile = (
+                            getattr(original_settings, "model_profile", "zen")
+                            == "zen"
+                        )
+                        if fallback_used or not zen_profile:
+                            extra = (
+                                " and the fallback model run"
+                                if zen_profile
+                                else " (fallback ladder is in-config for"
+                                     " this profile)"
+                            )
                             raise DockerJobError(
                                 "rate limited through the rotation budget"
-                                " and the fallback model run:"
+                                f"{extra}:"
                                 f" {output.strip()[-REASON_TAIL_BYTES:]}"
                             )
                         self._pace_before_retry(rotations_used + 1, output)

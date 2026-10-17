@@ -201,6 +201,42 @@ version.
      aggregate FP PR so a failure there cannot leave a half-open retry
      behind.
 
+## Model backends: one mount, N backends
+
+opencode is the only agent runtime; every backend is an opencode provider
+configuration. `agent/opencode.json` in the image is the static base, and
+`agent_job` renders the effective config per job from the
+`TRIAGE_MODEL_PROFILE` env (default `zen`), writing it to the container's
+writable `$HOME` — switching backends needs no code change and no image
+rebuild (`model_backends.py`).
+
+| Profile | Primary | Endpoint | Ladder | Notes |
+|---|---|---|---|---|
+| `zen` (default) | `opencode/mimo-v2.6-flash-free` | OpenCode Zen free | Zen fallbacks (`glm-5.3-flash-free`, `nemotron-3.5-lightning-free`) + backend fallback-model run | Burst-capped ~15-20 req/min community-measured; fine with pacing. Unchanged behavior. |
+| `openai-compatible` | `TRIAGE_MODEL_NAME` | `TRIAGE_MODEL_BASE_URL`, any OpenAI-compatible server | `TRIAGE_MODEL_FALLBACKS` (comma list, same endpoint only) | Covers NVIDIA NIM, OpenRouter, ollama, llama.cpp server, vLLM, LM Studio. |
+
+The openai-compatible profile renders a custom provider entry
+(`@ai-sdk/openai-compatible`, id `triage-custom`) with `baseURL` and, when
+a key env var is present (first of `TRIAGE_MODEL_API_KEY`,
+`NVIDIA_API_KEY`, `OPENROUTER_API_KEY`), an `apiKey` of `{env:NAME}` — the
+name is chosen by presence, the value never touches disk or argv. Local
+servers need no key. `TRIAGE_MODEL_REASONING=1` marks the model entry as a
+reasoning model. Example env blocks for NVIDIA NIM, OpenRouter, and local
+ollama are in `.env.example`.
+
+Benchmark snapshots (2026-10, free/community tiers): NVIDIA NIM
+`nemotron-3.5-super-vl-120b-a12b` passed a 12-call burst but flapped ~50%
+HTTP 500s on sustained sequential load (it exercises the transient-retry
+path by design); OpenRouter free tier caps at 50 requests/day; Zen free is
+burst-capped ~15-20 req/min. Retry behavior is profile-agnostic:
+`agent_job.classify_failure` maps provider output to rate-limited (exit 3,
+warp rotation), transient (in-place backoff retries), or fatal.
+
+Known limitation: cross-provider fallback (e.g. openai-compatible primary
+with Zen as opencode `fallback_models`) is not wired; for non-zen profiles
+the ladder is models on the same endpoint, and the backend's hardcoded Zen
+fallback-model run is skipped.
+
 ## Configuration
 
 All settings come from the environment (`triage_agent.config.Settings`).
@@ -216,7 +252,12 @@ time for real runs (unit tests and dry runs are exempt).
 | `TRUSTSIGHT_FEED_KEY` | none | Base64 PKCS#8 (DER) Ed25519 private key for signed feed alerts. Required for real jobs. |
 | `TRUSTSIGHT_FEED_KEY_ID` | `triage-agent` | `webhook-key-id` header value. |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | none | Token for the GitHub MCP server and the PR backstop REST calls. Required for real jobs. |
-| `TRIAGE_MODEL` | `opencode/mimo-v2.6-flash-free` | Model route for the runner; matches the pin in `agent/opencode.json`. |
+| `TRIAGE_MODEL` | unset | Explicit model override for the job container; wins over the profile's model. Leave unset to let the profile choose. |
+| `TRIAGE_MODEL_PROFILE` | `zen` | Model backend profile (`zen` or `openai-compatible`); see "Model backends" above. |
+| `TRIAGE_MODEL_BASE_URL` / `TRIAGE_MODEL_NAME` | none | openai-compatible profile: endpoint and model id. Both required when the profile is active. |
+| `TRIAGE_MODEL_API_KEY` | none | openai-compatible profile API key (generic). Aliases `NVIDIA_API_KEY` and `OPENROUTER_API_KEY` are honored by name presence; all are passed to job containers as bare env vars. Empty = local no-key server. |
+| `TRIAGE_MODEL_FALLBACKS` | none | openai-compatible profile: comma-separated fallback model names on the same endpoint. |
+| `TRIAGE_MODEL_REASONING` | `0` | Mark the openai-compatible model as a reasoning model in opencode. |
 | `TRIAGE_JOB_ROOT` | `/job` | Directory the agent writes `verdict.json` under. |
 | `TRIAGE_HARNESS_CLI` | `harness` | Harness CLI binary on PATH. |
 | `TRIAGE_HARNESS_TIMEOUT_SECONDS` | `900` | Timeout for `harness` CLI invocations. |

@@ -1,9 +1,22 @@
 """agent_job: verdict/PR extraction and the in-container entrypoint."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from triage_agent import agent_job
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def job_env(tmp_path, monkeypatch):
+    """Render-config inputs: repo root with agent/opencode.json, writable
+    HOME for the rendered config."""
+    monkeypatch.setenv("TRIAGE_REPO_ROOT", str(REPO_ROOT))
+    monkeypatch.setenv("HOME", str(tmp_path))
 
 VERDICT_JSON = json.dumps(
     {

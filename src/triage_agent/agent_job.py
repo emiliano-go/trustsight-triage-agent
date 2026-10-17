@@ -41,7 +41,8 @@ import sys
 import time
 from pathlib import Path
 
-from .config import WarpSettings
+from .config import ConfigError, WarpSettings
+from .model_backends import render_opencode_config, resolve_profile
 from .rate_limit import detect_429, effective_delay, extract_retry_after
 
 DEFAULT_MODEL = "opencode/mimo-v2.6-flash-free"
@@ -206,15 +207,31 @@ def run_with_retries(
 
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
-    model = os.environ.get("TRIAGE_MODEL", "").strip() or DEFAULT_MODEL
     opencode = os.environ.get("OPENCODE_BIN", "").strip() or "opencode"
     timeout = int(os.environ.get("AGENT_JOB_TIMEOUT_SECONDS", "")
                   or DEFAULT_TIMEOUT)
     repo_root = Path(
         os.environ.get("TRIAGE_REPO_ROOT", "/app/trustsight-triage-agent")
     )
-    config = repo_root / "agent" / "opencode.json"
     cwd = Path(os.environ.get("HOME", "/tmp"))
+
+    # The image bakes one static opencode.json; render the effective config
+    # for the requested model profile into the writable HOME so flipping
+    # TRIAGE_MODEL_PROFILE never needs an image rebuild. An explicit
+    # TRIAGE_MODEL still overrides the profile's model on the opencode CLI.
+    try:
+        profile = resolve_profile(os.environ.get("TRIAGE_MODEL_PROFILE"))
+        base = json.loads((repo_root / "agent" / "opencode.json").read_text())
+        rendered = render_opencode_config(base, profile, os.environ)
+    except (OSError, ValueError, ConfigError) as exc:
+        print(f"agent-job: cannot build opencode config: {exc}",
+              file=sys.stderr)
+        return EXIT_FAILURE
+    model = (os.environ.get("TRIAGE_MODEL", "").strip()
+             or rendered.get("agent", {}).get("triage", {}).get("model")
+             or DEFAULT_MODEL)
+    config = cwd / "opencode.json"
+    config.write_text(json.dumps(rendered))
 
     prompt_path = Path(argv[0]) if argv else PROMPT_PATH
     try:

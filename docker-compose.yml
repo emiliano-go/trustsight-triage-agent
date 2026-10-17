@@ -59,7 +59,17 @@ services:
     environment:
       TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
       TRIAGE_POLL_INTERVAL_SECONDS: "120"
-      TRIAGE_MODEL: opencode/mimo-v2.6-flash-free
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
+      TRIAGE_MODEL_PROFILE: ${TRIAGE_MODEL_PROFILE:-zen}
+      # openai-compatible profile inputs; empty means unused. Values reach
+      # job containers as bare env vars (name only) from the worker env.
+      TRIAGE_MODEL_BASE_URL: ${TRIAGE_MODEL_BASE_URL:-}
+      TRIAGE_MODEL_NAME: ${TRIAGE_MODEL_NAME:-}
+      TRIAGE_MODEL_API_KEY: ${TRIAGE_MODEL_API_KEY:-}
+      TRIAGE_MODEL_FALLBACKS: ${TRIAGE_MODEL_FALLBACKS:-}
+      TRIAGE_MODEL_REASONING: ${TRIAGE_MODEL_REASONING:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # Explicit path: never rely on PATH alone for the harness CLI.
       TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
@@ -96,7 +106,17 @@ services:
       - no-new-privileges:true
     environment:
       TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
-      TRIAGE_MODEL: opencode/mimo-v2.6-flash-free
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
+      TRIAGE_MODEL_PROFILE: ${TRIAGE_MODEL_PROFILE:-zen}
+      # openai-compatible profile inputs; empty means unused. Values reach
+      # job containers as bare env vars (name only) from the worker env.
+      TRIAGE_MODEL_BASE_URL: ${TRIAGE_MODEL_BASE_URL:-}
+      TRIAGE_MODEL_NAME: ${TRIAGE_MODEL_NAME:-}
+      TRIAGE_MODEL_API_KEY: ${TRIAGE_MODEL_API_KEY:-}
+      TRIAGE_MODEL_FALLBACKS: ${TRIAGE_MODEL_FALLBACKS:-}
+      TRIAGE_MODEL_REASONING: ${TRIAGE_MODEL_REASONING:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
       # Job containers are spawned from this image; keep it identical to
       # the image tag compose just built.

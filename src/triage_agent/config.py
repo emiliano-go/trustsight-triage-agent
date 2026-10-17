@@ -112,6 +112,8 @@ class Settings:
     feed_key_id: str = "triage-agent"
     github_token: str | None = None
     model: str = "opencode/mimo-v2.6-flash-free"
+    model_profile: str = "zen"
+    model_explicit: bool = False
     job_root: str = "/job"
     harness_cli: str = "harness"
     harness_timeout_seconds: int = 900
@@ -133,6 +135,11 @@ class Settings:
             raise ConfigError(f"feed_url must be an http(s) URL, got {self.feed_url!r}")
         if self.harness_timeout_seconds < 1:
             raise ConfigError("harness_timeout_seconds must be >= 1")
+        # Fail fast on a typo'd model profile (function-level import:
+        # model_profile itself imports ConfigError from this module).
+        from .model_backends import resolve_profile
+
+        resolve_profile(self.model_profile)
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -168,6 +175,8 @@ class Settings:
             github_token=_optional(e, "GITHUB_PERSONAL_ACCESS_TOKEN"),
             model=e.get("TRIAGE_MODEL", "opencode/mimo-v2.6-flash-free").strip()
             or "opencode/mimo-v2.6-flash-free",
+            model_profile=e.get("TRIAGE_MODEL_PROFILE", "zen").strip() or "zen",
+            model_explicit=bool(e.get("TRIAGE_MODEL", "").strip()),
             job_root=e.get("TRIAGE_JOB_ROOT", "/job").strip() or "/job",
             harness_cli=e.get("TRIAGE_HARNESS_CLI", "harness").strip() or "harness",
             harness_timeout_seconds=_int(
