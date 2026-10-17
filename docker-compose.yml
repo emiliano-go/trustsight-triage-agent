@@ -126,6 +126,10 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # Zen (opencode) route key; required for the default "zen" profile.
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      # Warp rotation for job containers (default true; the backend renders
+      # it as ENABLE_WARP_ROTATION per job). Set false when the model
+      # gateway rejects WARP egress IPs.
+      TRIAGE_WARP_ROTATION: ${TRIAGE_WARP_ROTATION:-true}
       TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
       # Job containers are spawned from this image; keep it identical to
       # the image tag compose just built.
