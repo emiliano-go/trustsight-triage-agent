@@ -85,11 +85,17 @@ class TestPickKeyEnv:
 
 
 class TestRenderZen:
-    def test_identity_and_copy(self):
+    def test_identity_except_title_model(self):
         base = _base()
         rendered = mb.render_opencode_config(base, "zen", {})
-        assert rendered == base
-        assert rendered is not base
+        assert rendered["agent"]["title"]["model"] == mb.ZEN_MODEL
+        # Everything else is untouched: the only addition is the title
+        # agent override pointing at the free route.
+        without_title = json.loads(json.dumps(rendered))
+        del without_title["agent"]["title"]
+        assert "title" not in base["agent"]
+        assert without_title == base
+        assert rendered is not base  # copied, not mutated
 
 
 class TestRenderOpenAICompatible:
@@ -104,6 +110,8 @@ class TestRenderOpenAICompatible:
             "TRIAGE_MODEL_BASE_URL"]
         assert provider["options"]["apiKey"] == "{env:NVIDIA_API_KEY}"
         assert "opencode" in rendered["provider"]  # zen ladder still around
+        assert (rendered["agent"]["title"]["model"]
+                == NVIDIA_ENV["TRIAGE_MODEL_NAME"])
 
     def test_ollama_local_no_key(self):
         rendered = mb.render_opencode_config(_base(), "openai-compatible",

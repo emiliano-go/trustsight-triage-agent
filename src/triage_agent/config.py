@@ -115,6 +115,7 @@ class Settings:
     model: str = "opencode/mimo-v2.6-flash-free"
     model_profile: str = "zen"
     model_explicit: bool = False
+    preflight_probe: bool = True
     job_root: str = "/job"
     harness_cli: str = "harness"
     harness_timeout_seconds: int = 900
@@ -179,6 +180,7 @@ class Settings:
             or "opencode/mimo-v2.6-flash-free",
             model_profile=e.get("TRIAGE_MODEL_PROFILE", "zen").strip() or "zen",
             model_explicit=bool(e.get("TRIAGE_MODEL", "").strip()),
+            preflight_probe=_bool(e, "TRIAGE_PREFLIGHT_PROBE", True),
             job_root=e.get("TRIAGE_JOB_ROOT", "/job").strip() or "/job",
             harness_cli=e.get("TRIAGE_HARNESS_CLI", "harness").strip() or "harness",
             harness_timeout_seconds=_int(

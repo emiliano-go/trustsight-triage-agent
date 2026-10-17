@@ -51,6 +51,7 @@ class Worker:
         self._process = process
         self._sleep = sleeper
         self._stop = False
+        self._probe_schedule = None
 
     @property
     def backend(self) -> object:
@@ -93,11 +94,60 @@ class Worker:
             log.warning("requeued %d stale running job(s) on startup",
                         requeued)
         while not self._stop:
+            if not self._preflight_ok():
+                continue  # stopped, or backed off inside
             job = self.queue.claim_next()
             if job is None:
                 self._sleep(self.poll_interval)
                 continue
             self._run_one(job)
+
+    def _preflight_ok(self) -> bool:
+        """Gate job claims on a healthy model gateway (TRIAGE_PREFLIGHT_PROBE,
+        default on).
+
+        The Zen/OpenCode gateway has dead windows where every session-init
+        fails with a wrapped UnknownError; claiming a job in such a window
+        burns its whole retry budget for nothing. One trivial probe call
+        (docker_backend.preflight) decides: on failure we log the dead
+        window, pace with the shared BackoffSchedule (~5-15 min), and
+        re-probe. The queue is untouched throughout, so an un-claimed job
+        stays queued and is never marked failed by a dead window.
+        """
+
+        if not getattr(self.settings, "preflight_probe", True):
+            return True
+        probe = getattr(self.backend, "preflight", None)
+        if probe is None:
+            return True
+        if self._probe_schedule is None:
+            from .config import WarpSettings
+
+            # First retry ~5 min, exponential x2 up to 15 min, 25% jitter.
+            self._probe_schedule = WarpSettings(
+                backoff_min_seconds=300.0
+            ).schedule()
+        attempt = 0
+        while not self._stop:
+            try:
+                if probe():
+                    if attempt:
+                        log.info(
+                            "preflight: gateway healthy again after"
+                            " %d dead-window probe(s)", attempt
+                        )
+                    return True
+            except Exception as exc:  # noqa: BLE001 - a broken probe is a
+                log.warning("preflight probe errored: %s", exc)  # dead window
+            attempt += 1
+            delay = self._probe_schedule.next_delay(attempt)
+            log.warning(
+                "preflight: model gateway dead window"
+                " (probe attempt %d); backing off %.0fs",
+                attempt, delay,
+            )
+            self._sleep(delay)
+        return False
 
     def _run_one(self, job: Job) -> None:
         payload = job.payload_dict()

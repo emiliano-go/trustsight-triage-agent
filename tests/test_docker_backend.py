@@ -316,3 +316,79 @@ def test_docker_host_default_leaves_env_unset(tmp_path):
     backend, fake = make_backend(tmp_path)
     backend.run(**run_kwargs(tmp_path))
     assert all(kw["env"] is None for kw in fake.kwargs)
+
+
+class TestPreflightProbe:
+    def _backend(self, monkeypatch, proc=None, exc=None, profile="zen"):
+
+
+        calls: list[list[str]] = []
+
+        def runner(cmd, **kwargs):
+            calls.append(list(cmd))
+            if exc is not None:
+                raise exc
+            return proc
+
+        settings = make_settings()
+        settings = Settings(
+            warp=settings.warp,
+            model_profile=profile,
+        )
+        backend = DockerBackend(settings, runner=runner)
+        return backend, calls
+
+    def test_healthy_probe_passes(self, monkeypatch):
+        from types import SimpleNamespace
+
+        backend, calls = self._backend(
+            monkeypatch, proc=SimpleNamespace(returncode=0, stdout="ok",
+                                              stderr=""))
+        assert backend.preflight() is True
+        cmd = calls[0]
+        assert "--entrypoint" in cmd and "opencode" in cmd
+        assert "--rm" in cmd
+        assert "-m" in cmd
+        assert model_id(cmd) == "opencode/mimo-v2.6-flash-free"
+
+    def test_unknownerror_output_fails(self, monkeypatch):
+        from types import SimpleNamespace
+
+        dead = SimpleNamespace(
+            returncode=1, stdout="",
+            stderr='{"name": "UnknownError", "data": {"message":'
+                   ' "Unexpected server error"}}',
+        )
+        backend, _ = self._backend(monkeypatch, proc=dead)
+        assert backend.preflight() is False
+
+    def test_timeout_is_dead_window(self, monkeypatch):
+        import subprocess
+
+        backend, _ = self._backend(
+            monkeypatch, exc=subprocess.TimeoutExpired(["docker"], 90))
+        assert backend.preflight() is False
+
+    def test_wrong_answer_fails(self, monkeypatch):
+        from types import SimpleNamespace
+
+        backend, _ = self._backend(
+            monkeypatch,
+            proc=SimpleNamespace(returncode=0, stdout="no idea", stderr=""))
+        assert backend.preflight() is False
+
+    def test_openai_compatible_profile_model(self, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.setenv("TRIAGE_MODEL_NAME", "qwen3:8b")
+        backend, calls = self._backend(
+            monkeypatch,
+            proc=SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+            profile="openai-compatible",
+        )
+        assert backend.preflight() is True
+        assert model_id(calls[0]) == "qwen3:8b"
+
+
+def model_id(cmd):
+    return cmd[cmd.index("-m") + 1]

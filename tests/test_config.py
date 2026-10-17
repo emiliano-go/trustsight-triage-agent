@@ -122,3 +122,12 @@ def test_docker_host_from_env():
     assert s.docker_host == "unix:///var/run/docker.sock"
     s = Settings.from_env({})
     assert s.docker_host is None
+
+
+def test_preflight_probe_default_and_env():
+    s = Settings.from_env({})
+    assert s.preflight_probe is True
+    off = Settings.from_env({"TRIAGE_PREFLIGHT_PROBE": "0"})
+    assert off.preflight_probe is False
+    with pytest.raises(ConfigError):
+        Settings.from_env({"TRIAGE_PREFLIGHT_PROBE": "maybe"})

@@ -234,3 +234,85 @@ def test_idle_loop_stops_on_flag():
     worker._sleep = stop_after_two
     worker.idle_loop()
     assert sleeps == [5, 5]
+
+
+class TestPreflightGate:
+    def _worker(self, tmp_path, probe_results, sleeps, **settings_kw):
+        from types import SimpleNamespace
+
+        from triage_agent.config import Settings, WarpSettings
+
+        results = iter(probe_results)
+
+        def probe():
+            return next(results)
+
+        settings = Settings(
+            warp=WarpSettings(enable_rotation=False),
+            worker_poll_seconds=1,
+            **settings_kw,
+        )
+        with JobQueue(tmp_path / "q.sqlite3") as queue:
+            worker = Worker(
+                settings, queue,
+                backend=SimpleNamespace(preflight=probe),
+                sleeper=sleeps.append,
+            )
+            return worker, queue
+
+    def test_dead_window_backs_off_then_claims(self, tmp_path):
+        sleeps: list[float] = []
+        worker, _ = self._worker(tmp_path, [False, False, True], sleeps)
+        assert worker._preflight_ok() is True
+        assert len(sleeps) == 2
+        for delay in sleeps:
+            assert 300 <= delay <= 900 + 1  # ~5-15 min pacing, jittered
+
+    def test_never_healthy_never_claims(self, tmp_path):
+        sleeps: list[float] = []
+        worker, queue = self._worker(tmp_path, [False] * 99, sleeps)
+
+        def stop_after_three(delay):
+            sleeps.append(delay)
+            if len(sleeps) >= 3:
+                worker.stop()
+
+        worker._sleep = stop_after_three
+        # Enqueued job must remain queued while the window is dead.
+        with JobQueue(tmp_path / "q.sqlite3") as q:
+            job, _ = q.enqueue({"package": "x"}, package="x")
+        assert worker._preflight_ok() is False
+        with JobQueue(tmp_path / "q.sqlite3") as q:
+            assert q.get(job.id).status == "queued"
+
+    def test_disabled_probe_claims_immediately(self, tmp_path):
+        sleeps: list[float] = []
+        worker, _ = self._worker(
+            tmp_path, [True], sleeps, preflight_probe=False)
+        assert worker._preflight_ok() is True
+        assert sleeps == []
+
+    def test_probe_exception_is_dead_window(self, tmp_path):
+        from types import SimpleNamespace
+
+        from triage_agent.config import Settings, WarpSettings
+
+        sleeps: list[float] = []
+        outcomes = iter([RuntimeError("boom"), True])
+
+        def flaky_probe():
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        settings = Settings(warp=WarpSettings(enable_rotation=False),
+                            worker_poll_seconds=1)
+        with JobQueue(tmp_path / "q3.sqlite3") as queue:
+            worker = Worker(
+                settings, queue,
+                backend=SimpleNamespace(preflight=flaky_probe),
+                sleeper=sleeps.append,
+            )
+            assert worker._preflight_ok() is True
+        assert len(sleeps) == 1  # one backoff after the errored probe

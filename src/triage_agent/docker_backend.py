@@ -200,6 +200,58 @@ class DockerBackend:
         ]
         return flags
 
+    # -- pre-flight gateway probe -----------------------------------------
+
+    def preflight(self, *, timeout: float = 90.0) -> bool:
+        """One trivial opencode call in a throwaway container.
+
+        True means the model gateway is in a healthy window and a job is
+        worth claiming; False means a dead window (UnknownError / gateway
+        5xx / timeout / wrong answer). The probe deliberately bypasses the
+        image entrypoint (--entrypoint opencode): dead-window detection is
+        about gateway/account health, not egress IP, and a 90s probe cannot
+        amortize a ~60s warp-svc bootstrap. The container keeps the job
+        hardening minus the bootstrap (read-only, tmpfs /tmp, same
+        network, cap profile, env) so a probe pass genuinely predicts a
+        job container reaching the model.
+        """
+
+        flags = [
+            "run", "--rm",
+            "--entrypoint", "opencode",
+            "--read-only",
+            "--tmpfs", "/tmp",
+            "--network", self.network or "none",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+        ]
+        flags += self._env_flags()
+        model = model_backends.profile_primary_model(
+            getattr(self.settings, "model_profile", "zen"), os.environ
+        )
+        if getattr(self.settings, "model_explicit", False):
+            model = self.settings.model
+        cmd = [*flags, self.image, "run",
+               "-m", model, "Reply with exactly: ok"]
+        try:
+            proc = self._docker(cmd, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            log.warning("preflight probe timed out after %.0fs", timeout)
+            return False
+        except DockerJobError as exc:
+            log.warning("preflight probe could not start: %s", exc)
+            return False
+        output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        if proc.returncode != 0:
+            log.warning("preflight probe failed (rc=%d): %s",
+                        proc.returncode, output.strip()[-200:])
+            return False
+        ok = "ok" in output.lower()
+        if not ok:
+            log.warning("preflight probe answered unexpectedly: %s",
+                        output.strip()[-200:])
+        return ok
+
     # -- one container attempt ---------------------------------------------
 
     def _stage_prompt(self, volume: str, prompt: str) -> None:

@@ -133,6 +133,13 @@ def render_opencode_config(
             f" expected one of {PROFILES}"
         )
     config = json.loads(json.dumps(base))
+    # Route opencode's session-title side-call through the same free/model
+    # route as the job: the Zen account has no paid funds, so the default
+    # title model (gpt-5.4-nano) fails every session with "Insufficient
+    # account funds" (harmless but polluting, and it may contribute to
+    # gateway rejections). agent.title.model is an AgentConfig override.
+    primary = profile_primary_model(profile, os.environ if env is None else env)
+    config.setdefault("agent", {}).setdefault("title", {})["model"] = primary
     if profile == "zen":
         return config
 
@@ -180,3 +187,14 @@ def render_opencode_config(
             source.get("TRIAGE_MODEL_FALLBACKS"))
     ]
     return config
+
+
+def profile_primary_model(
+    profile: str, env: Mapping[str, str] | None = None
+) -> str:
+    """The primary model id for *profile* (what jobs and probes run)."""
+
+    if profile == "zen":
+        return ZEN_MODEL
+    source = os.environ if env is None else env
+    return source.get("TRIAGE_MODEL_NAME", "").strip() or ZEN_MODEL

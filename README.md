@@ -254,6 +254,17 @@ burst-capped ~15-20 req/min. Retry behavior is profile-agnostic:
 `agent_job.classify_failure` maps provider output to rate-limited (exit 3,
 warp rotation), transient (in-place backoff retries), or fatal.
 
+Two gateway-health mechanisms live on top of the profiles. First, the
+rendered config routes opencode's session-title side-call through the
+profile's primary model (`agent.title.model`): the account has no paid
+funds, so the default title model fails every session with "Insufficient
+account funds". Second, the worker's pre-flight probe
+(`docker_backend.preflight`, `TRIAGE_PREFLIGHT_PROBE`, default on) detects
+dead windows - observed live as Zen "Go usage limit exceeded" flapping at
+the free-tier cap, surfacing opaquely as UnknownError - and paces claims
+with the shared BackoffSchedule (~5-15 min) so jobs are never failed by a
+window that will reset.
+
 Known limitation: cross-provider fallback (e.g. openai-compatible primary
 with Zen as opencode `fallback_models`) is not wired; for non-zen profiles
 the ladder is models on the same endpoint, and the backend's hardcoded Zen
@@ -301,6 +312,7 @@ time for real runs (unit tests and dry runs are exempt).
 | `TRIAGE_DOCKER_CPUS` | none | Container CPU limit (`--cpus`). |
 | `TRIAGE_GITHUB_OWNER` | none | Repo owner for PR discovery by branch (`owner/trustsight`); omit only when the target repo's own namespace is correct. |
 | `TRIAGE_STALE_JOB_SECONDS` | `1800` | Age past which a `running` job is requeued at worker/dispatcher startup. |
+| `TRIAGE_PREFLIGHT_PROBE` | `true` | Before claiming a job, run one trivial `opencode run` in a throwaway container against the configured model; in a gateway dead window back off ~5-15 min and re-probe instead of burning a job's retries. Un-claimed jobs stay queued. |
 
 Booleans accept `1/true/yes/on` and `0/false/no/off`; malformed values are a
 `ConfigError`, as are out-of-range integers and non-http(s) feed URLs.
