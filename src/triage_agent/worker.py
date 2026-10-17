@@ -65,6 +65,17 @@ class Worker:
     def stop(self) -> None:
         self._stop = True
 
+    def idle_loop(self) -> None:
+        """Sleep until stopped; used when job secrets are missing.
+
+        Keeps the process (and its signal handlers) alive so the service
+        stays up and logs show why nothing is being processed, instead of
+        crash-looping.
+        """
+
+        while not self._stop:
+            self._sleep(self.poll_interval)
+
     def install_signal_handlers(self) -> None:
         def handler(signum: int, _frame: object) -> None:
             log.info("received signal %d; stopping after the current job",

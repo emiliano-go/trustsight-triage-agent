@@ -8,8 +8,11 @@ job, per rotation attempt:
 
 - the image is ``TRIAGE_IMAGE`` (default ``trustsight-triage-agent:live``);
 - the job runs on a per-job docker volume mounted at ``/job`` so no host
-  path is ever exposed to the agent;
-- the prompt is bind-mounted read-only at ``/job/prompt.txt``;
+  path is ever exposed to the agent; the prompt is written into that
+  volume through a throwaway ``sh -c "cat > ..."`` container (stdin over
+  the docker API), which works whether the worker runs on the docker host
+  or in a container with the socket mounted, where worker-local paths are
+  invisible to the daemon;
 - runtime flags mirror ``docker-compose.yml``: read-only rootfs, tmpfs
   ``/tmp`` and ``/var/lib/cloudflare-warp`` (fresh WARP registration per
   container, which is exactly the rotation model), all capabilities
@@ -23,7 +26,11 @@ job, per rotation attempt:
   network, plus memory/CPU limits;
 - secrets pass via bare ``-e NAME`` flags (docker reads the values from
   the worker's own environment), so the token never appears in argv, in
-  ``ps``, or in logs.
+  ``ps``, or in logs;
+- the daemon endpoint is overridable with ``TRIAGE_DOCKER_HOST`` (a
+  ``unix://`` or ``tcp://`` URL passed to the CLI as ``DOCKER_HOST``), so
+  the same code serves the host-worker deployment (default local socket)
+  and the socket-mounted container worker.
 
 Container output is capped (10 MiB) and recorded under the job dir as
 ``container.log``. A nonzero exit fails the job with the log tail as the
@@ -42,6 +49,7 @@ backstop fast path. When absent, the backstop discovers the PR by branch.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -99,17 +107,26 @@ class DockerBackend:
         self.timeout = getattr(settings, "job_timeout_seconds", 3600)
         warp = getattr(settings, "warp", None)
         self.max_rotations = getattr(warp, "max_rotations", 5)
+        self.docker_host = getattr(settings, "docker_host", None)
         self.last_pr_url: str | None = None
 
     # -- docker CLI plumbing ---------------------------------------------
 
-    def _docker(self, args: list[str], *, timeout: float | None = None):
+    def _docker(self, args: list[str], *, timeout: float | None = None,
+                input: str | None = None):
+        env = None
+        if self.docker_host:
+            # Overrides the local socket; the only supported way to reach
+            # the daemon from a socket-mounted worker container.
+            env = {**os.environ, "DOCKER_HOST": self.docker_host}
         try:
             return self._runner(
                 [self.docker, *args],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
+                input=input,
             )
         except OSError as exc:
             raise DockerJobError(f"docker CLI failed: {exc}") from exc
@@ -118,8 +135,7 @@ class DockerBackend:
         warp = getattr(self.settings, "warp", None)
         return bool(getattr(warp, "enable_rotation", False))
 
-    def _run_flags(self, container: str, volume: str,
-                   prompt_path: Path) -> list[str]:
+    def _run_flags(self, container: str, volume: str) -> list[str]:
         flags = [
             "run",
             "--name", container,
@@ -130,7 +146,6 @@ class DockerBackend:
             "--security-opt", "no-new-privileges:true",
             "-e", "HOME=/tmp/home",  # bun/opencode writes under $HOME
             "-v", f"{volume}:/job",
-            "-v", f"{prompt_path}:/job/prompt.txt:ro",
             "--network", self.network or "none",
         ]
         # No -u: the container starts as root for the entrypoint's
@@ -178,9 +193,35 @@ class DockerBackend:
 
     # -- one container attempt ---------------------------------------------
 
-    def _run_container(self, container: str, volume: str,
-                       prompt_path: Path) -> tuple[str, int]:
-        flags = self._run_flags(container, volume, prompt_path)
+    def _stage_prompt(self, volume: str, prompt: str) -> None:
+        """Write the prompt into the job volume via a stdin helper container.
+
+        A bind mount of a worker-local file only works when the worker runs
+        on the docker host; staging through the API works in both
+        deployments (and keeps the prompt out of argv).
+        """
+
+        try:
+            proc = self._docker(
+                [
+                    "run", "--rm", "-i",
+                    "-v", f"{volume}:/job",
+                    "--entrypoint", "/bin/sh",
+                    self.image,
+                    "-c", "cat > /job/prompt.txt",
+                ],
+                timeout=60,
+                input=prompt,
+            )
+        except subprocess.TimeoutExpired:
+            raise DockerJobError("prompt staging timed out") from None
+        if proc.returncode != 0:
+            raise DockerJobError(
+                f"prompt staging failed: {(proc.stderr or '').strip()[:256]}"
+            )
+
+    def _run_container(self, container: str, volume: str) -> tuple[str, int]:
+        flags = self._run_flags(container, volume)
         try:
             proc = self._docker(
                 [*flags, self.image, *CONTAINER_CMD],
@@ -229,7 +270,9 @@ class DockerBackend:
 
         self.last_pr_url = None
         original_settings = self.settings
-        prompt_path = write_job_file(
+        # Local copy under the job dir, for debugging only; the container
+        # gets its prompt from the staged volume copy, not this path.
+        write_job_file(
             job_root, job_id, "prompt.txt", prompt.encode("utf-8")
         )
         policy = rate_limit.RotationPolicy(self.max_rotations)
@@ -243,8 +286,8 @@ class DockerBackend:
                 volume = f"triage-job-{job_id[:12]}-{attempt}"
                 self._docker(["volume", "create", volume])
                 try:
-                    output, rc = self._run_container(container, volume,
-                                                     prompt_path)
+                    self._stage_prompt(volume, prompt)
+                    output, rc = self._run_container(container, volume)
                     self._record_log(job_root, job_id, attempt, output)
                     if rc == 0:
                         return self._collect(job_root, job_id, volume)

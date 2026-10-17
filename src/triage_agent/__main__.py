@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 from .config import ConfigError, Settings
@@ -16,6 +17,19 @@ log = logging.getLogger(__name__)
 def _cmd_dispatch(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
     with JobQueue(args.db) as queue:
+        try:
+            settings.require_job_secrets()
+        except ConfigError as exc:
+            # Fail-safe for `docker compose up` without a token: stay up,
+            # say why, do not poll or enqueue anything.
+            log.warning("missing secrets (%s); dispatcher idle, no jobs will"
+                        " be dispatched", exc)
+            from .worker import Worker
+
+            idle = Worker(settings, queue)
+            idle.install_signal_handlers()
+            idle.idle_loop()
+            return 0
         requeued = queue.requeue_stale(settings.stale_job_seconds)
         if requeued:
             log.warning("requeued %d stale running job(s) on startup",
@@ -28,10 +42,18 @@ def _cmd_worker(args: argparse.Namespace) -> int:
     from .worker import Worker
 
     settings = Settings.from_env()
-    settings.require_job_secrets()
     with JobQueue(args.db) as queue:
         worker = Worker(settings, queue)
         worker.install_signal_handlers()
+        try:
+            settings.require_job_secrets()
+        except ConfigError as exc:
+            # Fail-safe for `docker compose up` without a token: stay up,
+            # say why, and skip job processing instead of crash-looping.
+            log.warning("missing secrets (%s); worker idle, queued jobs will"
+                        " not be processed", exc)
+            worker.idle_loop()
+            return 0
         worker.run_forever()
     return 0
 
@@ -62,7 +84,11 @@ def main(argv: list[str] | None = None) -> int:
             " in-container agent entrypoint (run by the docker backend)"
         ),
     )
-    parser.add_argument("--db", default="triage.sqlite3", help="queue DB path")
+    parser.add_argument(
+        "--db",
+        default=os.environ.get("TRIAGE_DB_PATH", "triage.sqlite3"),
+        help="queue DB path (default: $TRIAGE_DB_PATH or triage.sqlite3)",
+    )
     parser.add_argument(
         "args",
         nargs="*",

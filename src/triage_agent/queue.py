@@ -159,6 +159,9 @@ def _row_to_job(row: sqlite3.Row) -> Job:
 class JobQueue:
     def __init__(self, path: str | Path):
         self.path = str(path)
+        parent = Path(self.path).parent
+        if str(parent) and not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")

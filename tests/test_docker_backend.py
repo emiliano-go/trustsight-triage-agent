@@ -31,10 +31,12 @@ class FakeDocker:
         self.fail_output = fail_output
         self.volumes: dict[str, dict[str, str]] = {}
         self.calls: list[list[str]] = []
+        self.kwargs: list[dict] = []
         self.attempts = 0
 
     def __call__(self, cmd, **kwargs):
         self.calls.append(list(cmd))
+        self.kwargs.append(kwargs)
         if cmd[1] == "volume":
             if cmd[2] == "create":
                 self.volumes[cmd[3]] = {}
@@ -42,6 +44,11 @@ class FakeDocker:
                 self.volumes.pop(cmd[-1], None)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if cmd[1] == "rm":
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[1] == "run" and "-i" in cmd:
+            # prompt staging: stdin lands in the job volume
+            vol = self._volume_of(cmd, ":/job")
+            self.volumes[vol]["prompt.txt"] = kwargs["input"]
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if "--entrypoint" in cmd:
             vol = self._volume_of(cmd, ":/job:ro")
@@ -53,8 +60,9 @@ class FakeDocker:
         # the job container itself
         self.attempts += 1
         vol = self._volume_of(cmd, ":/job")
-        prompt = self._volume_of(cmd, ":/job/prompt.txt:ro")
-        self.volumes[vol]["prompt.txt"] = Path(prompt).read_text()
+        if self.volumes[vol].get("prompt.txt") != "do the triage":
+            return SimpleNamespace(returncode=1, stdout="",
+                                   stderr="prompt not staged")
         if self.mode == "429_then_ok":
             mode = "429_always" if self.attempts == 1 else "ok"
         elif self.mode == "exit3_then_ok":
@@ -245,3 +253,66 @@ def test_docker_cli_missing_fails_cleanly(tmp_path):
     backend = DockerBackend(make_settings(), runner=missing)
     with pytest.raises(DockerJobError, match="docker CLI"):
         backend.run(**run_kwargs(tmp_path))
+
+
+def test_no_host_path_bind_mounts(tmp_path):
+    """The socket-mounted worker's FS is invisible to the daemon: every
+    file the job needs must travel through a docker volume, never a
+    worker-local bind mount."""
+    backend, fake = make_backend(tmp_path)
+    backend.run(**run_kwargs(tmp_path))
+    for cmd in fake.calls:
+        for index, arg in enumerate(cmd):
+            if arg != "-v" or index + 1 >= len(cmd):
+                continue
+            mount = cmd[index + 1]
+            for suffix in (":/job", ":/job:ro"):
+                if mount.endswith(suffix):
+                    source = mount[: -len(suffix)]
+                    # docker volume names only, never worker FS paths
+                    assert "/" not in source and not source.startswith("."), (
+                        mount
+                    )
+
+
+def test_prompt_staged_into_volume_via_stdin(tmp_path):
+    backend, fake = make_backend(tmp_path)
+    backend.run(**run_kwargs(tmp_path))
+    stages = [c for c in fake.calls if c[1:4] == ["run", "--rm", "-i"]]
+    assert len(stages) == 1
+    assert stages[0][-2:] == ["-c", "cat > /job/prompt.txt"]
+    kw = fake.kwargs[fake.calls.index(stages[0])]
+    assert kw["input"] == "do the triage"
+
+
+def test_staging_failure_fails_the_job(tmp_path):
+    class StageFails(FakeDocker):
+        def __call__(self, cmd, **kwargs):
+            if cmd[1:4] == ["run", "--rm", "-i"]:
+                return SimpleNamespace(returncode=1, stdout="",
+                                       stderr="image missing")
+            return super().__call__(cmd, **kwargs)
+
+    fake = StageFails(tmp_path)
+    backend = DockerBackend(make_settings(), runner=fake,
+                            sleeper=lambda _s: None)
+    with pytest.raises(DockerJobError, match="prompt staging failed"):
+        backend.run(**run_kwargs(tmp_path))
+    # no job container should have been started
+    assert fake.attempts == 0
+
+
+def test_docker_host_passed_as_env(tmp_path):
+    settings = make_settings(docker_host="unix:///var/run/docker.sock")
+    backend, fake = make_backend(tmp_path, settings=settings)
+    backend.run(**run_kwargs(tmp_path))
+    assert all(
+        kw["env"]["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+        for kw in fake.kwargs
+    )
+
+
+def test_docker_host_default_leaves_env_unset(tmp_path):
+    backend, fake = make_backend(tmp_path)
+    backend.run(**run_kwargs(tmp_path))
+    assert all(kw["env"] is None for kw in fake.kwargs)

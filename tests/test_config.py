@@ -100,3 +100,10 @@ def test_job_secrets_enforced():
         }
     )
     ok.require_job_secrets()  # feed key is optional; the feed sink is skipped
+
+
+def test_docker_host_from_env():
+    s = Settings.from_env({"TRIAGE_DOCKER_HOST": "unix:///var/run/docker.sock"})
+    assert s.docker_host == "unix:///var/run/docker.sock"
+    s = Settings.from_env({})
+    assert s.docker_host is None

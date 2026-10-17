@@ -50,6 +50,20 @@ RUN curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
     && apt-get install -y --no-install-recommends cloudflare-warp \
     && rm -rf /var/lib/apt/lists/*
 
+# Static docker CLI, pinned version + sha256, for the compose-mode worker:
+# it drives the HOST daemon through the mounted /var/run/docker.sock (no
+# daemon ships in this image). Same checksum pattern as github-mcp-server.
+ARG DOCKER_CLI_VERSION=29.8.2
+ARG DOCKER_CLI_SHA256=995d1ef289677f74fd58d8d2c35727b6a4ee389c69db8638a3e42d0487aa5b0f
+RUN curl -fsSL \
+    "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
+    -o /tmp/docker-cli.tgz \
+    && echo "${DOCKER_CLI_SHA256}  /tmp/docker-cli.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/docker-cli.tgz -C /usr/local/bin --strip-components=1 \
+       docker/docker \
+    && chmod +x /usr/local/bin/docker \
+    && rm /tmp/docker-cli.tgz
+
 RUN pip install --no-cache-dir uv==0.12.13
 
 ENV UV_LINK_MODE=copy \
@@ -73,8 +87,9 @@ ENV PATH="/app/trustsight-harness/.venv/bin:/app/trustsight-triage-agent/.venv/b
     HARNESS_MCP_COMMAND="/app/trustsight-harness/.venv/bin/harness-mcp"
 
 RUN useradd --create-home --shell /usr/sbin/nologin triage \
-    && mkdir -p /job \
-    && chown -R triage:triage /job /app/trustsight-triage-agent
+    && mkdir -p /job /var/lib/triage \
+    && chown -R triage:triage /job /var/lib/triage \
+    /app/trustsight-triage-agent
 ENV HOME=/tmp/home
 # Root on purpose: docker/entrypoint.sh runs the privileged bootstrap
 # (warp-svc needs the TUN device and root state) and setpriv-drops to the

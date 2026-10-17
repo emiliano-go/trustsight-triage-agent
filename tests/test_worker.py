@@ -150,3 +150,86 @@ def test_payload_column_migrated_into_existing_db(tmp_path):
         job2, created = queue.enqueue({"package": "b"}, package="b")
         assert created
         assert job2.payload_dict() == {"package": "b"}
+
+
+def test_worker_command_idles_without_token(tmp_path, monkeypatch, caplog):
+    """`triage-agent worker` with no token: warn once, stay up, run nothing."""
+    from triage_agent import __main__ as cli
+    from triage_agent import worker as worker_mod
+
+    monkeypatch.delenv("GITHUB_PERSONAL_ACCESS_TOKEN", raising=False)
+    db = tmp_path / "triage.sqlite3"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        worker_mod.Worker, "run_forever", lambda self: calls.append("run")
+    )
+    monkeypatch.setattr(
+        worker_mod.Worker, "idle_loop", lambda self: calls.append("idle")
+    )
+    monkeypatch.setattr(worker_mod.Worker, "install_signal_handlers", lambda self: None)
+
+    with caplog.at_level("WARNING"):
+        rc = cli.main(["worker", "--db", str(db)])
+    assert rc == 0
+    assert calls == ["idle"]
+    assert "worker idle" in caplog.text
+    # fail-safe: the queue file exists but nothing was claimed or run
+    with JobQueue(db) as queue:
+        assert queue.counts()["queued"] == 0
+
+
+def test_worker_command_runs_with_token(tmp_path, monkeypatch):
+    from triage_agent import __main__ as cli
+    from triage_agent import worker as worker_mod
+
+    monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "tok")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        worker_mod.Worker, "run_forever", lambda self: calls.append("run")
+    )
+    monkeypatch.setattr(
+        worker_mod.Worker, "idle_loop", lambda self: calls.append("idle")
+    )
+    monkeypatch.setattr(worker_mod.Worker, "install_signal_handlers", lambda self: None)
+    rc = cli.main(["worker", "--db", str(tmp_path / "t.sqlite3")])
+    assert rc == 0
+    assert calls == ["run"]
+
+
+def test_dispatch_command_idles_without_token(tmp_path, monkeypatch, caplog):
+    """No-token `compose up`: the dispatcher must not poll or enqueue."""
+    from triage_agent import __main__ as cli
+    from triage_agent import worker as worker_mod
+
+    monkeypatch.delenv("GITHUB_PERSONAL_ACCESS_TOKEN", raising=False)
+    db = tmp_path / "triage.sqlite3"
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "dispatch_forever", lambda *a: calls.append("poll"))
+    monkeypatch.setattr(
+        worker_mod.Worker, "idle_loop", lambda self: calls.append("idle")
+    )
+    monkeypatch.setattr(worker_mod.Worker, "install_signal_handlers", lambda self: None)
+    with caplog.at_level("WARNING"):
+        rc = cli.main(["dispatch", "--db", str(db)])
+    assert rc == 0
+    assert calls == ["idle"]
+    assert "dispatcher idle" in caplog.text
+
+
+def test_idle_loop_stops_on_flag():
+    sleeps: list[float] = []
+    worker = Worker(
+        Settings(), JobQueue.__new__(JobQueue), sleeper=sleeps.append,
+        poll_interval=5,
+    )
+    worker._stop = False
+
+    def stop_after_two(_seconds):
+        sleeps.append(_seconds)
+        if len(sleeps) == 2:
+            worker.stop()
+
+    worker._sleep = stop_after_two
+    worker.idle_loop()
+    assert sleeps == [5, 5]

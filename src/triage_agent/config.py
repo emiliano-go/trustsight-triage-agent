@@ -120,6 +120,7 @@ class Settings:
     job_timeout_seconds: int = 3600
     triage_image: str = "trustsight-triage-agent:live"
     docker_network: str | None = None
+    docker_host: str | None = None
     docker_memory_mb: int | None = None
     docker_cpus: float | None = None
     github_owner: str | None = None
@@ -184,6 +185,7 @@ class Settings:
             triage_image=e.get("TRIAGE_IMAGE", "").strip()
             or "trustsight-triage-agent:live",
             docker_network=_optional(e, "TRIAGE_DOCKER_NETWORK"),
+            docker_host=_optional(e, "TRIAGE_DOCKER_HOST"),
             docker_memory_mb=_int(e, "TRIAGE_DOCKER_MEMORY_MB", 0, minimum=0)
             or None,
             docker_cpus=_float(e, "TRIAGE_DOCKER_CPUS", 0.0, minimum=0.0)

@@ -52,7 +52,8 @@ automatically: a maintainer reviews, signs, and merges every artifact.
           +----------------------------------------------------+
           |  DockerBackend (src/triage_agent/docker_backend.py) |
           |  one container per job on a per-job docker volume  |
-          |  mounted at /job, prompt ro at /job/prompt.txt:    |
+          |  mounted at /job; prompt staged into the volume    |
+          |  via a stdin helper container (no host paths),     |
           |  --read-only, --tmpfs /tmp + warp state,           |
           |  --cap-drop ALL, NET_ADMIN only with warp,         |
           |  no-new-privileges, -u triage,                     |
@@ -229,7 +230,9 @@ time for real runs (unit tests and dry runs are exempt).
 | `TRIAGE_WORKER_POLL_SECONDS` | `30` | Worker idle poll interval when the queue is empty. |
 | `TRIAGE_JOB_TIMEOUT_SECONDS` | `3600` | Hard cap on one container run; the container is killed past it. |
 | `TRIAGE_IMAGE` | `trustsight-triage-agent:live` | Image the worker runs per job. |
-| `TRIAGE_DOCKER_NETWORK` | none (= `--network none`) | Pre-configured restricted network for job containers. The agent needs egress to AUR, github.com, api.github.com, opencode.ai, the feed sink, and ntfy; enforce the allowlist in that network's setup, not here. |
+| `TRIAGE_DOCKER_NETWORK` | none (= `--network none`) | Network job containers attach to. The agent needs egress to AUR, github.com, api.github.com, opencode.ai (Zen), the feed sink, and ntfy; enforce the allowlist in that network's setup, not here. Compose defaults it to the fixed-name `triage-jobs` network. |
+| `TRIAGE_DOCKER_HOST` | none (= local socket) | Docker daemon endpoint (`unix://` or `tcp://`), passed to the CLI as `DOCKER_HOST`. Set to `unix:///var/run/docker.sock` by compose so the containerized worker reaches the host daemon; leave unset on a host-installed worker. |
+| `TRIAGE_DB_PATH` | `triage.sqlite3` (cwd) | Default queue DB path for the CLI when `--db` is not given. Compose sets it to the shared queue volume. |
 | `TRIAGE_DOCKER_MEMORY_MB` | none | Container memory limit (`--memory`). |
 | `TRIAGE_DOCKER_CPUS` | none | Container CPU limit (`--cpus`). |
 | `TRIAGE_GITHUB_OWNER` | none | Repo owner for PR discovery by branch (`owner/trustsight`); omit only when the target repo's own namespace is correct. |
@@ -425,7 +428,8 @@ evidence, and the backstop/alert delivery stages integrate end to end. The
 composition is also covered offline (fake verify/render, real stubs) in
 `tests/test_dry_run.py`.
 
-170 offline tests cover the dispatcher, queue, verdict validation, pipeline
+180 offline tests cover the dispatcher, queue, verdict validation,
+pipeline
 composition, worker loop, docker backend (against a fake docker CLI),
 agent job, PR backstop (including discovery by branch), special alert,
 warp manager, and rate-limit policy; everything runs against fakes and
@@ -462,52 +466,117 @@ opencode's bun runtime dies with ENOENT without it) and, when
 state dir) and blocks until the tunnel reports `Status: Connected`
 (fail-open to plain egress on timeout; the agent job itself never touches
 `warp-cli`). It then `setpriv`-drops to the `triage` user and exec's the
-command, so the job never runs as root. Build and run:
+command, so the job never runs as root. Build and start the full
+deployment (see the quickstart below):
 
 ```bash
-docker compose -f trustsight-triage-agent/docker-compose.yml up --build
+cd trustsight-triage-agent
+docker compose up -d --build
 ```
 
-## Running in production
+## Quickstart: standalone with docker compose
 
-Two processes share one SQLite queue file (WAL mode; they may run on
-different hosts only if the DB lives on shared storage, which is not
-recommended: run both on one host):
+From a fresh machine with Docker and the three sibling checkouts side by
+side (`trustsight/`, `trustsight-harness/`,
+`trustsight-triage-agent/`):
 
-1. **Dispatcher** (containerized, this compose file): polls the feed and
-   enqueues. `triage-agent dispatch --db /data/triage.sqlite3`.
-2. **Worker** (on the docker **host**, not in compose: see the warning
-   comment in `docker-compose.yml` about the docker socket): claims jobs
-   and runs each in a sandboxed container. Run it as an unprivileged user
-   under systemd:
+```bash
+cd trustsight-triage-agent
+cp .env.example .env       # and put a GITHUB_TOKEN in it
+docker compose up -d --build
+```
 
-   ```ini
-   [Unit]
-   Description=TrustSight triage worker
+That is the whole deployment. Compose starts two services from one
+image (the build context is the parent directory, because the image
+carries all three sibling checkouts; the tag is fixed so the worker
+spawns job containers from exactly what was just built):
 
-   [Service]
-   User=triage
-   Environment=GITHUB_PERSONAL_ACCESS_TOKEN=...
-   Environment=TRUSTSIGHT_FEED_KEY=...
-   Environment=TRIAGE_IMAGE=trustsight-triage-agent:live
-   ExecStart=/usr/local/bin/triage-agent worker --db /var/lib/triage/triage.sqlite3
-   Restart=on-failure
+```
+                    host docker daemon (/var/run/docker.sock)
+                    |                                    |
+        +-----------v-----------+          +-------------v------------+
+        |   dispatcher service  |          |    worker service        |
+        |   polls the feed,     |  SQLite  |    claims jobs, spawns   |
+        |   enqueues jobs       |--queue-->|    one container per job |
+        +-----------------------+  volume  +-------------+------------+
+                                                 | docker run (socket)
+                    +----------------------------v---------------------+
+                    |  one-shot JOB container per job (same image):    |
+                    |  prompt staged into a per-job volume, WARP on,   |
+                    |  opencode agent -> AUR/Zen/GitHub egress,        |
+                    |  verdict (+pr_url) written back over the socket  |
+                    +--------------------------------------------------+
+```
 
-   [Install]
-   WantedBy=multi-user.target
-   ```
+- The queue DB lives in the `triage-queue` named volume and is created
+  on first run (additive schema, no migration step).
+- Without `GITHUB_TOKEN` both services still start, log a clear
+  warning, and idle: nothing is polled, enqueued, or run. Add the token
+  and `docker compose up -d` again.
+- Check progress:
 
-   Secrets arrive as environment variables (the worker passes the GitHub
-   token to job containers via a bare `-e` flag, so it never appears in
-   argv or logs). The worker spends `TRIAGE_WARP_MAX_ROTATIONS` fresh
-   containers (fresh anonymous WARP registrations) on 429s, then one
-   fallback-model run, then fails the job.
+  ```bash
+  docker compose logs -f worker
+  docker compose exec worker triage-agent status
+  ```
 
-Build the job image first (context: the directory containing the three
+  (`status` reads `TRIAGE_DB_PATH`, which the compose file sets to the
+  shared volume.)
+
+### How the worker spawns job containers
+
+`docker_backend.py` drives the docker CLI. When the worker runs in the
+compose service, `TRIAGE_DOCKER_HOST=unix:///var/run/docker.sock`
+reaches the host daemon and `TRIAGE_DOCKER_NETWORK` names the compose
+network job containers join (default `triage-jobs`; outbound traffic on
+it is unrestricted, so WARP rotation remains the egress control — point
+the variable at your own allowlisted network for stricter setups). The
+prompt never bind-mounts a worker-local path (invisible to the daemon
+from inside a container); it is piped into the job volume through a
+throwaway `cat > /job/prompt.txt` container, and the verdict returns
+the same way.
+
+**Security note.** The socket mount makes the worker container
+root-equivalent on the docker host. That is the standard, documented
+tradeoff for sibling-container deployments and is accepted for this
+personal/single-tenant setup; job containers themselves stay sandboxed
+(read-only rootfs, dropped caps, non-root job user, no host mounts). The
+pluggable `TRIAGE_DOCKER_HOST` exists so stricter deployments can run
+the worker elsewhere.
+
+### Alternative: worker on the docker host (no socket mount)
+
+If the socket tradeoff is unacceptable, run `triage-agent worker` on the
+host as a systemd unit and delete/omit the `worker` service from
+`docker-compose.yml`:
+
+```ini
+[Service]
+User=triage
+Environment=GITHUB_PERSONAL_ACCESS_TOKEN=...
+Environment=TRIAGE_IMAGE=trustsight-triage-agent:latest
+ExecStart=/usr/local/bin/triage-agent worker \
+    --db /var/lib/triage/triage.sqlite3
+Restart=on-failure
+```
+
+With no `TRIAGE_DOCKER_HOST` set, the backend uses the local socket
+(default behavior, unchanged from before).
+
+## Running in production notes
+
+Two processes share one SQLite queue file (WAL mode; run both on one
+host). Secrets arrive as environment variables (the worker passes the
+GitHub token to job containers via a bare `-e` flag, so it never appears
+in argv or logs). The worker spends `TRIAGE_WARP_MAX_ROTATIONS` fresh
+containers (fresh anonymous WARP registrations) on 429s, then one
+fallback-model run, then fails the job.
+
+Build the image standalone (context: the directory containing the three
 sibling checkouts):
 
 ```bash
-docker build -f trustsight-triage-agent/Dockerfile -t trustsight-triage-agent:live ..
+docker build -f trustsight-triage-agent/Dockerfile -t trustsight-triage-agent:latest ..
 ```
 
 **Recovery.** If the worker dies mid-job, the job stays `running` until
@@ -526,5 +595,6 @@ plain SQLite). Container output per attempt is kept under
 Core runtime modules, warp rotation, PR backstop with branch discovery,
 special alert delivery, pipeline composition, the worker loop, the
 docker job backend, the in-container agent entrypoint, agent contract,
-container build, and CI are in place; 137 offline tests cover the
+container build, standalone compose deployment, and CI are in place;
+180 offline tests cover the
 dispatcher/queue/verdict runner, worker, docker backend, and agent job.
