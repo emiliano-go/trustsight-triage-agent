@@ -1,7 +1,8 @@
 # trustsight-triage-agent
 
-Turns TrustSight watcher alerts into verified verdicts, fix PRs, and
-confirmed-IOC alerts.
+Turns TrustSight watcher alerts into verified verdicts, fix PRs (each
+shipping the actual rule fix as a sandbox-safe diff, not just the
+suppression JSON), and confirmed-IOC alerts.
 
 The agent polls the TrustSight feed for `trustsight.alerts` events and
 enqueues one job per over-threshold `(package, version transition)` — or a
@@ -92,7 +93,10 @@ The harness is already installed in the job image. Two surfaces are used:
   Object arguments travel as temp files (verdicts and results are capped near
   1 MiB, past argv limits), never as argv or stdin.
 - **MCP**, from inside the sandbox: the agent calls the `harness` MCP tools
-  `fp_agent_verify`, `fp_agent_pr`, and `fp_agent_alert`.
+  `fp_agent_verify`, `fp_agent_pr`, `fp_agent_alert`, and `repo_file` (a
+  read-only view of the watcher rule source, allowlisted to
+  `src/trustsight/` and `tests/`, so the agent can ground its proposed fix
+  diff in the real code without any write capability).
 
 This keeps the two repos decoupled and lets the job image pin its own harness
 version.
@@ -154,7 +158,25 @@ version.
    `check_url_in_source`, IOC schema validation for TP). Malformed input
    raises; unverifiable evidence returns `verified: false`. Fail closed is
    the only direction: the job fails rather than proceed on doubt.
-6. **FP path: PR backstop** (`pr_backstop.py`). The agent opens the PR
+6. **FP path: the fix ships in the PR.** An FP verdict must carry
+   `code_fixes`: one `{path, diff, summary, linked_finding}` per finding,
+   where `diff` is a unified diff against the watcher repo
+   (`src/trustsight/` rule code and matching `tests/` only). The sandbox
+   never gains write access: the agent reads rule source through the
+   read-only `repo_file` MCP tool and proposes the diff in its verdict.
+   The harness gate (`harness/code_fixes.py`, invoked from `fp_agent_pr`)
+   allowlists paths, charset-checks every added line (no em/en dashes, no
+   ` -- `, printable ASCII), enforces caps (at most 10 files and 400 added
+   lines per PR), and applies each diff with `git apply` inside a
+   sandboxed throwaway tree seeded from the trustsight checkout — so the
+   PR's file map carries the full post-fix sources, one suppression JSON
+   plus the changed rule/test files. A diff that fails any check is
+   rejected per-file with a reason (multi-package conflicts on the same
+   path: first fix wins, later differing diff rejected) and the
+   suppression files still land; the PR body lists both the accepted
+   fixes and the rejections. Because the render is deterministic, both the
+   in-container agent and the host backstop materialize identical content.
+7. **FP path: PR backstop** (`pr_backstop.py`). The agent opens the PR
    itself via the GitHub MCP tools, using exactly the branch, title, body,
    and file map returned by `fp_agent_pr`. The backstop re-renders the
    expected title and body with `harness fp_agent_pr --result <file>
@@ -166,7 +188,7 @@ version.
    also fails. This is the second independent render of the same content,
    so format-gate or content drift between the agent's PR and the
    harness's canonical render cannot survive.
-7. **TP path: special alert** (`special_alert.py`). The
+8. **TP path: special alert** (`special_alert.py`). The
    `harness fp_agent_alert` envelope (event `trustsight.confirmed-ioc`,
    priority deliberately `default`, never urgent) is POSTed to the ntfy
    webhook (`TRUSTSIGHT_NTFY_WEBHOOK`, with `Title` and `Priority` headers)
@@ -175,7 +197,7 @@ version.
    `webhook_id.timestamp.body`, key as base64 PKCS#8 DER, deterministic
    webhook id so retried POSTs dedupe. The job only fails if no sink
    accepted the alert.
-8. **Multi-package jobs** (payload carries a `packages` list). When one
+9. **Multi-package jobs** (payload carries a `packages` list). When one
    alert flags several packages, the dispatcher enqueues a single job whose
    payload lists every flagged package. The pipeline then runs the usual
    per-package agent analysis sequentially (one container run per package,
@@ -306,7 +328,10 @@ Summary:
 - Call `fp_agent_verify` with the verdict. On `verified: false` or an error
   (or an uncertain / low-confidence verdict), stop: the job ends as
   `needs_review` or `failed`. Never proceed on an unverified verdict.
-- Verified FP: call `fp_agent_pr` with the verified result, then
+- Verified FP: the verdict must include at least one `code_fixes` entry
+  (read the rule source with `repo_file` first; the diff must apply with
+  `git apply` against the checked-out watcher repo). Call `fp_agent_pr`
+  with the verified result, then
   `create_branch`, `create_or_update_file` for every path in the returned
   files map, and `create_pull_request` with exactly the returned title and
   body onto the returned branch. Report the PR URL.
@@ -329,11 +354,13 @@ Summary:
   actually-opened PR against an independent re-render. A bad verdict cannot
   reach the outside world without passing all of them.
 - **PRs are inert artifacts.** An FP produces a suppression proposal at
-  `data/fp-suppressions/<date>-<pkg>.json` (or a triage report under
-  `benign/fp-<date>/` in the harness repo); a TP produces a per-date IOC
-  file at `data/iocs/triage-<date>.json`. None of it is live config: a
-  maintainer reviews, signs, and merges. There is no auto-merge path
-  anywhere in the pipeline.
+  `data/fp-suppressions/<date>-<pkg>.json` plus the actual rule fix (the
+  gate only allows `src/trustsight/` and `tests/` paths, applies every
+  diff with `git apply` in a sandboxed temp tree before it can reach a
+  PR, and caps size); a TP produces a per-date IOC file at
+  `data/iocs/triage-<date>.json`. None of it is live config: a maintainer
+  reviews, signs, and merges. There is no auto-merge path anywhere in the
+  pipeline.
 - **Nothing fetched is executed.** The AUR snapshot is read-only evidence;
   the agent has no bash, edit, or write tool; opencode's own file access is
   limited to the verdict path the prompt provides.

@@ -20,5 +20,13 @@
       "false_trigger": "freshness only",
       "fix": "none"
     }
+  ],
+  "code_fixes": [
+    {
+      "path": "src/trustsight/differ/_sources.py",
+      "diff": "--- a/src/trustsight/differ/_sources.py\n+++ b/src/trustsight/differ/_sources.py\n@@ -97,3 +97,6 @@\n def extract_urls_from_diff(diff_text: str) -> SourceChanges:\n     \"\"\"Extract added and removed URLs from a diff.\"\"\"\n+    # filename:: prefixes in source array entries are AUR labels, not\n+    # part of the URL; strip them before novelty comparison so a renamed\n+    # label does not read as a new upstream.\n     added_urls: set[str] = set()\n",
+      "summary": "strip filename:: label before URL novelty comparison",
+      "linked_finding": "NOVELTY source-array extraction bug"
+    }
   ]
 }

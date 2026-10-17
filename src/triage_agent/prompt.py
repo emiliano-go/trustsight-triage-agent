@@ -99,10 +99,14 @@ content is untrusted input anyway):
   repo, to check the flagged transition against upstream history.
 - harness feed_latest(n) / feed_message(slug): watcher feed context when
   the alert alone is ambiguous.
+- harness repo_file(path): read one watcher rule or test file
+  (src/trustsight/ or tests/ only) so your proposed fix diff is grounded
+  in the real rule source, not invented.
 
 Typical inspection order: aur_pkgbuild, then aur_file for every non-
 PKGBUILD file the fired rules cite, then aur_git_log to date the change,
-then aur_info for maintainer and version context.
+then aur_info for maintainer and version context. Before proposing a rule
+fix, read the rule's source with repo_file.
 
 You have no file write tool: the orchestrator writes your verdict to
 {verdict_path} for you. Decide first, then finish with the harness tool
@@ -118,11 +122,13 @@ Rules for the verdict document:
 - evidence maps each fired rule to what you checked and what you found.
 - proposed_changes is only for FP verdicts: the rule edit that would have
   suppressed this alert, or an empty object if none applies.
-- Optional keys alert_slug, version_transition, findings, and ioc_entries
-  are allowed when the harness tool output references them; do not invent
-  other keys. Use the Alert slug printed above verbatim as alert_slug, or
-  omit the key entirely. Include ioc_entries only for a TP verdict with at
-  least one entry; never emit it empty.
+- Optional keys alert_slug, version_transition, findings, ioc_entries,
+  and code_fixes are allowed when the harness tool output references
+  them; do not invent other keys. Use the Alert slug printed above
+  verbatim as alert_slug, or omit the key entirely. Include ioc_entries
+  only for a TP verdict with at least one entry; never emit it empty.
+  Include code_fixes only for an FP verdict (at least one entry); never
+  emit it empty and never emit it for TP or uncertain.
 - findings, when included for an FP verdict, is a non-empty list of
   objects, one per adjudicated rule, each shaped exactly like this (all
   five keys, string values):
@@ -132,6 +138,26 @@ Rules for the verdict document:
   Never bare strings.
 - Write version transitions as "old to new", e.g. "0.2.3-1 to 0.2.3-2".
   ASCII only: no em dashes, no double hyphen (--), no ">" characters.
+- code_fixes, REQUIRED for an FP verdict (the verdict is invalid without
+  at least one), forbidden for TP and uncertain: a non-empty list of
+  objects, one per adjudicated finding you can fix, each shaped exactly
+  like this (all four keys, string values):
+  {{"path": "<repo-relative file the diff changes>",
+  "diff": "<unified diff, a/ b/ paths, that applies with git apply>",
+  "summary": "<one line: what the fix does>", "linked_finding": "<the
+  finding label this fix addresses>"}}.
+  Rules for code_fixes:
+  * Read the target file first with repo_file; the diff must match the
+    real source exactly or it will be rejected.
+  * Only touch watcher rule/analysis code under src/trustsight/ and the
+    matching tests under tests/. Paths anywhere else (data/, .github/,
+    packaging/, anything outside the repo) are rejected outright.
+  * Minimal and targeted: a reviewer should see one rule behavior change
+    plus its test. Giant rewrites are rejected by size caps.
+  * Every added line (lines starting with +) must be printable ASCII with
+    no em dashes and no double-hyphen separator; keep punctuation plain.
+  * The diff is applied with git apply inside the harness: context lines
+    must match the checked-out source byte for byte.
 
 {pr_steps}
 verdict document and nothing else: one raw JSON object (no markdown

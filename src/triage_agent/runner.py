@@ -40,12 +40,16 @@ _TOP_KEYS = {
     "evidence",
     "proposed_changes",
     # Optional keys the harness verifier consumes (findings for FP replay,
-    # ioc_entries for TP); the agent may or may not include them.
+    # ioc_entries for TP, code_fixes for FP rule fixes); the agent may or
+    # may not include them.
     "alert_slug",
     "version_transition",
     "findings",
     "ioc_entries",
+    "code_fixes",
 }
+
+_CODE_FIX_KEYS = ("path", "diff", "summary", "linked_finding")
 
 
 class VerdictError(ValueError):
@@ -99,6 +103,22 @@ def validate_verdict(doc: object, *, max_bytes: int = MAX_VERDICT_BYTES) -> dict
             raise VerdictError(f"invalid alert_slug: {slug!r}")
     if "ioc_entries" in doc and not doc["ioc_entries"]:
         raise VerdictError("ioc_entries must not be empty; omit the key")
+    if "code_fixes" in doc:
+        fixes = doc["code_fixes"]
+        if not isinstance(fixes, list):
+            raise VerdictError("code_fixes must be a list")
+        for index, item in enumerate(fixes):
+            if not isinstance(item, dict):
+                raise VerdictError(
+                    f"code_fixes[{index}] must be an object with"
+                    " path/diff/summary/linked_finding"
+                )
+            missing = [k for k in _CODE_FIX_KEYS
+                       if not isinstance(item.get(k), str)]
+            if missing:
+                raise VerdictError(
+                    f"code_fixes[{index}] missing string keys: {missing}"
+                )
     if "findings" in doc:
         for index, item in enumerate(doc["findings"]):
             if not isinstance(item, dict):
@@ -119,7 +139,8 @@ def validate_verdict(doc: object, *, max_bytes: int = MAX_VERDICT_BYTES) -> dict
             for i, item in enumerate(value):
                 walk(item, f"{where}[{i}]")
 
-    for key in ("evidence", "proposed_changes", "findings", "ioc_entries"):
+    for key in ("evidence", "proposed_changes", "findings", "ioc_entries",
+                "code_fixes"):
         if key in doc:
             walk(doc[key], key)
     return doc

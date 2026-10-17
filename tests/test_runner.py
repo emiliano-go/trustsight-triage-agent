@@ -224,3 +224,30 @@ def test_findings_items_must_be_objects(tmp_path):
     )
     assert outcome.outcome == "failed"
     assert "findings[0] must be an object" in (outcome.reason or "")
+
+
+class TestCodeFixesValidation:
+    BASE = {"schema_version": 1, "package": "demo", "verdict": "FP",
+            "confidence": "high"}
+
+    def _verdict(self, fixes):
+        return {**self.BASE, "code_fixes": fixes}
+
+    def test_valid_code_fixes_accepted(self):
+        doc = self._verdict([{
+            "path": "src/trustsight/rules/r.py",
+            "diff": "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n",
+            "summary": "s", "linked_finding": "f"}])
+        assert validate_verdict(doc)["code_fixes"][0]["path"] == \
+            "src/trustsight/rules/r.py"
+
+    @pytest.mark.parametrize("fixes", [
+        "nope",                        # not a list
+        [42],                          # not an object
+        [{"path": "x"}],               # missing keys
+        [{"path": "x", "diff": 1,
+          "summary": "s", "linked_finding": "f"}],   # non-string diff
+    ])
+    def test_invalid_code_fixes_rejected(self, fixes):
+        with pytest.raises(VerdictError):
+            validate_verdict(self._verdict(fixes))

@@ -64,6 +64,13 @@ def _verify(verdict: dict, **kwargs):
             "findings_table": [
                 {"finding": f"{package} noise", "false_trigger": "t",
                  "fix": "f"}],
+            "code_fixes": [{
+                "path": f"src/trustsight/rules/{package}.py",
+                "diff": f"--- a/src/trustsight/rules/{package}.py\n"
+                        f"+++ b/src/trustsight/rules/{package}.py\n"
+                        f"@@ -0,0 +1 @@\n+fix for {package}\n",
+                "summary": f"fix {package} trigger",
+                "linked_finding": f"{package} noise"}],
             "suppression": {"rule_id": "C024", "package": package},
             "report_entry": {"package": package}}
 
@@ -83,6 +90,7 @@ class FakeRender:
                 head += f" (+{len(names) - 2} more)"
             body_lines = [f"FP triage: {head}", ""]
             files = {}
+            fix_lines = ["Code fixes:"]
             for item in result["packages"]:
                 name = item["package"]
                 body_lines += [f"Package: {name}",
@@ -91,6 +99,11 @@ class FakeRender:
                                f"| {name} noise | t | f |", ""]
                 files[f"data/fp-suppressions/2026-10-17-{name}.json"] = \
                     json.dumps(item["suppression"]) + "\n"
+                for fix in item.get("code_fixes", []):
+                    files[fix["path"]] = f"# fixed {name}\n"
+                    fix_lines.append(
+                        f"- {fix['path']}: {fix['summary']}")
+            body_lines.extend(["", *fix_lines])
             return {"branch": "triage/fp-multi-deadbeef",
                     "title": f"FP triage: {head}",
                     "body": "\n".join(body_lines),
@@ -176,15 +189,23 @@ def test_three_fp_packages_one_pr_with_three_suppressions(
     assert len(opened) == 1
     pr = opened[0]
     assert pr["title"] == "FP triage: pkg-a, pkg-b (+1 more)"
-    assert list(pr["files"]) == [
+    # 3 suppression files + 3 applied rule fixes in the one PR
+    assert sorted(pr["files"]) == [
         "data/fp-suppressions/2026-10-17-pkg-a.json",
         "data/fp-suppressions/2026-10-17-pkg-b.json",
         "data/fp-suppressions/2026-10-17-pkg-c.json",
+        "src/trustsight/rules/pkg-a.py",
+        "src/trustsight/rules/pkg-b.py",
+        "src/trustsight/rules/pkg-c.py",
     ]
     # ... with one findings-table section per package.
     assert pr["body"].count("| Finding | False trigger | Fix |") == 3
     for pkg in ("pkg-a", "pkg-b", "pkg-c"):
         assert f"Package: {pkg}" in pr["body"]
+    # the PR also ships one applied rule fix per FP package
+    for pkg in ("pkg-a", "pkg-b", "pkg-c"):
+        assert f"src/trustsight/rules/{pkg}.py" in pr["files"]
+    assert pr["body"].count("Code fixes:") == 1
     # No TP packages: no alerts, no IOC PRs.
     assert sent == []
     assert all("iocs" not in path for pr in opened
@@ -208,8 +229,9 @@ def test_mixed_verdicts_split_flows(tmp_path, queue, monkeypatch):
     assert len(opened) == 2
     fp_prs = [pr for pr in opened if "fp-suppressions" in next(iter(pr["files"]))]
     assert len(fp_prs) == 1
-    assert list(fp_prs[0]["files"]) == [
-        "data/fp-suppressions/2026-10-17-pkg-a.json"]
+    assert sorted(fp_prs[0]["files"]) == [
+        "data/fp-suppressions/2026-10-17-pkg-a.json",
+        "src/trustsight/rules/pkg-a.py"]
     # The TP package got the confirmed-IOC flow for that package only.
     assert [a["package"] for a in sent] == ["pkg-b"]
     assert sent[0]["event"] == "trustsight.confirmed-ioc"

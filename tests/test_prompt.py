@@ -25,3 +25,16 @@ def test_prompt_bans_em_dash_and_double_dash():
     prompt = build_prompt({"package": "p"})
     assert "\u2014" not in prompt
     assert " -- " not in prompt
+
+
+def test_prompt_demands_code_fixes_for_fp():
+    from triage_agent.prompt import build_prompt
+
+    entry = {"package": "demo", "aur_url": "u", "rules": ["C024"],
+             "findings": []}
+    for open_pr in (True, False):
+        text = build_prompt(entry, open_pr=open_pr)
+        assert "code_fixes, REQUIRED for an FP verdict" in text
+        assert "repo_file(path)" in text
+        assert "git apply" in text
+        assert "src/trustsight/" in text
