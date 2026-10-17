@@ -241,7 +241,7 @@ Benchmark table (fill in as runs complete; one row per live dispatch):
 | Date | Package | Model | Wall time | Rotations | 429s | Verdict (confidence) | PR opened? | Notes |
 |---|---|---|---|---|---|---|---|---|
 | 2026-10-17 | pulsesync-bin | MiMo (main, PR #35 baseline) | ~20 min | 0 | 0 | FP (high), high-quality evidence | yes, first try | baseline |
-| | sparkle-rolling-bin | LongCat 2.5 Preview (this branch) | | | | | | fill in |
+| 2026-10-17 | sparkle-rolling-bin | LongCat 2.5 Preview (this branch) | ~5 min per attempt (4 attempts, 12 opencode runs) | 0 | 0 (transient Zen 'Unexpected server error' instead) | none (session dies before the first tool call) | no | RESULT: route is alive (trivial prompts and no-MCP configs answer fine), but prompt + the three MCP servers' tool schemas overflow the model's usable context on Zen - every real job died pre-tool-call; in-place retries classified it transient 3x per attempt. Not viable as zen default while the agent is MCP-heavy. |
 
 ## Model backends: one mount, N backends
 
