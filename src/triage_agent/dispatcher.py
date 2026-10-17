@@ -186,41 +186,18 @@ def poll_once(
             # dispatcher run. Backfill the in-memory set and skip it.
             continue
         entries = payload.get("over_threshold", [])
-        valid = [
-            entry
-            for entry in entries
-            if isinstance(entry, dict) and "package" in entry
-        ]
         for entry in entries:
             if not isinstance(entry, dict) or "package" not in entry:
                 log.warning("over_threshold entry missing package: %r", entry)
-        if len(valid) > 1:
-            # Multi-package alert: one job covering every flagged package so
-            # verified FPs are suppressed by a single aggregate PR.
-            payload_for_job = {
-                "packages": [job_payload(entry) for entry in valid]
-            }
-            label = f"{valid[0]['package']} (+{len(valid) - 1} more)"
+                continue
+            payload_for_job = job_payload(entry)
+            kind = "ioc" if entry.get("ioc_matches") else "triage"
             job, created = queue.enqueue(
-                payload_for_job, package=label, kind="triage"
+                payload_for_job, package=entry["package"], kind=kind
             )
             if created:
-                log.info(
-                    "enqueued multi-package job %s covering %d packages (%s)",
-                    job.id, len(valid), label,
-                )
-                yield job.id, label
-        else:
-            for entry in valid:
-                payload_for_job = job_payload(entry)
-                kind = "ioc" if entry.get("ioc_matches") else "triage"
-                job, created = queue.enqueue(
-                    payload_for_job, package=entry["package"], kind=kind
-                )
-                if created:
-                    log.info("enqueued %s job %s for %s", kind, job.id,
-                             job.package)
-                    yield job.id, job.package
+                log.info("enqueued %s job %s for %s", kind, job.id, job.package)
+                yield job.id, job.package
         # Mark the event seen only after its entries were processed; any
         # partial failure is still covered by the jobs.content_hash UNIQUE
         # constraint on the next poll.
