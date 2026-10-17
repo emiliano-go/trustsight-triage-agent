@@ -104,6 +104,11 @@ services:
       - SETGID
     security_opt:
       - no-new-privileges:true
+    group_add:
+      # Host gid that owns /var/run/docker.sock (root:docker 0660 by
+      # default). The job user needs it to talk to the mounted socket.
+      # Set TRIAGE_DOCKER_GID in .env to `stat -c %g /var/run/docker.sock`.
+      - ${TRIAGE_DOCKER_GID:-988}
     environment:
       TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
       TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
