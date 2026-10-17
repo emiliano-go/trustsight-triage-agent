@@ -1,0 +1,63 @@
+# Compose for the triage agent job container.
+#
+# The Dockerfile needs all three sibling checkouts in the build context
+# (the harness's [tool.uv.sources] expects ../trustsight), so the context
+# is the directory that contains them. Run from anywhere:
+#   docker compose -f trustsight-triage-agent/docker-compose.yml up --build
+#
+# Egress allowlist (enforced at the network/firewall layer, not by compose;
+# document and mirror these in your firewall rules). The container needs to
+# reach ONLY:
+#   - AUR:            aur.archlinux.org            (agent evidence, verify)
+#   - git hosts:      github.com                   (PR open/fetch/backstop)
+#                     api.github.com               (PR backstop REST calls)
+#   - opencode:       opencode.ai                  (Zen model route)
+#   - feed sink:      TRUSTSIGHT_FEED_URL          (dispatcher poll, signed TP alert)
+#   - ntfy:           TRUSTSIGHT_NTFY_WEBHOOK host (TP alert)
+#   - WARP (opt.):    pkg.cloudflareclient.com at build; warp-svc endpoints
+#                     at run time when ENABLE_WARP_ROTATION=1
+# Everything else should be denied by the surrounding firewall/egress proxy.
+
+services:
+  triage-agent:
+    build:
+      # Repo parent: contains trustsight/, trustsight-harness/ and
+      # trustsight-triage-agent/ as siblings.
+      context: ..
+      dockerfile: trustsight-triage-agent/Dockerfile
+    image: trustsight-triage-agent:latest
+    user: "triage"
+    read_only: true
+    tmpfs:
+      - /tmp
+      # warp-svc keeps its registration state here; on the read-only root
+      # it must live on a tmpfs (fresh, anonymous consumer per container).
+      - /var/lib/cloudflare-warp
+    cap_drop:
+      - ALL
+    cap_add:
+      # Job service only: WARP's wireguard tunnel needs TUN device
+      # management. Irrelevant (and droppable) when warp rotation is off.
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Set to 1 to start warp-svc in the container and rotate WARP egress
+      # between jobs. Left at 0, the container runs on its plain egress.
+      ENABLE_WARP_ROTATION: "0"
+      TRIAGE_WARP_ROTATION: "true"
+      TRIAGE_WARP_MAX_ROTATIONS: "5"
+      TRIAGE_POLL_INTERVAL_SECONDS: "120"
+      TRIAGE_MODEL: "opencode/MiMo-V2.6-Flash"
+      TRIAGE_HARNESS_CLI: "harness"
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+      TRUSTSIGHT_FEED_KEY: ${TRUSTSIGHT_FEED_KEY:-}
+      TRUSTSIGHT_FEED_KEY_ID: ${TRUSTSIGHT_FEED_KEY_ID:-triage-agent}
+      TRUSTSIGHT_FEED_URL: ${TRUSTSIGHT_FEED_URL:-https://watcher.trustsight.org}
+      TRUSTSIGHT_NTFY_WEBHOOK: ${TRUSTSIGHT_NTFY_WEBHOOK:-}
+    volumes:
+      - triage-jobs:/job
+    restart: unless-stopped
+
+volumes:
+  triage-jobs:

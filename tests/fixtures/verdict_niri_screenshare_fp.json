@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "package": "niri-screenshare",
+  "verdict": "FP",
+  "confidence": "high",
+  "rationale": "Two NOVELTY findings are FPs from the filename::url source-array extraction bug; R054 fires on a standard systemd user service install; H015/H020 are informational. Net benign.",
+  "alert_slug": "2026-10-16/165917",
+  "version_transition": "0.2.3-1 to 0.2.3-2",
+  "evidence": {
+    "R054": "Standard systemd user service install into $pkgdir/usr/lib/systemd/user/; legitimate for a portal backend.",
+    "NOVELTY": "Source URL is present as filename::url in the source array; extract_urls_from_diff does not strip the filename:: prefix.",
+    "H020": "Informational freshness signal, no weight."
+  },
+  "proposed_changes": {},
+  "findings": [
+    {
+      "rule_id": "H020",
+      "reason": "Informational freshness signal, no weight.",
+      "finding": "Very recent update",
+      "false_trigger": "freshness only",
+      "fix": "none"
+    }
+  ]
+}

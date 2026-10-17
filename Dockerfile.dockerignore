@@ -1,0 +1,22 @@
+# Build context must contain the three sibling checkouts (trustsight,
+# trustsight-harness, trustsight-triage-agent); compose sets context to "..".
+
+.git
+**/.git
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.benchmarks
+**/.cache
+**/.hypothesis
+**/.wrangler
+**/.seo-debug
+**/.mcp-scratch
+**/.kimi-code
+**/.claude
+**/coverage
+**/site
+**/*.sqlite3
