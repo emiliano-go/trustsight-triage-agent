@@ -11,7 +11,7 @@ def test_defaults_from_empty_env():
     assert s.feed_key is None
     assert s.warp.enable_rotation is True
     assert s.warp.max_rotations == 5
-    assert s.model == "opencode/mimo-v2.6-flash-free"
+    assert s.model == "opencode/longcat-2.5-preview-free"
     assert s.warp.backoff_min_seconds == 30.0
     assert s.warp.backoff_max_seconds == 900.0
     assert s.warp.backoff_factor == 2.0

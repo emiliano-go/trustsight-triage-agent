@@ -223,6 +223,26 @@ version.
      aggregate FP PR so a failure there cannot leave a half-open retry
      behind.
 
+## Branch: feature/longcat-2.5-preview
+
+This branch swaps the zen profile's primary model from
+`opencode/mimo-v2.6-flash-free` to **`opencode/longcat-2.5-preview-free`**
+(`agent/opencode.json`, the `TRIAGE_MODEL` default in `config.py` and
+compose) to A/B it against the MiMo baseline. The fallback ladder is
+unchanged (`opencode/glm-5.3-flash-free`, `opencode/nemotron-3.5-lightning-free`).
+
+Caveat: LongCat 2.5 Preview Free is a limited-window OpenCode Zen free
+model (window opened 2026-09-26); it can disappear or be re-tiered at any
+time, exactly like the earlier MiMo-V2.6-Flash route. Do not merge this
+branch on model availability alone.
+
+Benchmark table (fill in as runs complete; one row per live dispatch):
+
+| Date | Package | Model | Wall time | Rotations | 429s | Verdict (confidence) | PR opened? | Notes |
+|---|---|---|---|---|---|---|---|---|
+| 2026-10-17 | pulsesync-bin | MiMo (main, PR #35 baseline) | ~20 min | 0 | 0 | FP (high), high-quality evidence | yes, first try | baseline |
+| | sparkle-rolling-bin | LongCat 2.5 Preview (this branch) | | | | | | fill in |
+
 ## Model backends: one mount, N backends
 
 opencode is the only agent runtime; every backend is an opencode provider

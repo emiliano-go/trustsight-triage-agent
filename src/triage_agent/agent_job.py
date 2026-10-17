@@ -25,7 +25,8 @@ sandbox:
    telling the backend to rotate egress (fresh container) without burning
    an in-place retry.
 
-Environment: ``TRIAGE_MODEL`` (default opencode/mimo-v2.6-flash-free),
+Environment: ``TRIAGE_MODEL`` (default
+``opencode/longcat-2.5-preview-free`` on this branch),
 ``OPENCODE_BIN`` (default ``opencode``), ``AGENT_JOB_TIMEOUT_SECONDS``
 (default 1200), ``TRIAGE_REPO_ROOT`` (default ``/app/trustsight-triage-agent``,
 where ``agent/opencode.json`` lives in the image).
@@ -45,7 +46,7 @@ from .config import ConfigError, WarpSettings
 from .model_backends import render_opencode_config, resolve_profile
 from .rate_limit import detect_429, effective_delay, extract_retry_after
 
-DEFAULT_MODEL = "opencode/mimo-v2.6-flash-free"
+DEFAULT_MODEL = "opencode/longcat-2.5-preview-free"
 DEFAULT_TIMEOUT = 1200
 MAX_IN_PLACE_RETRIES = 3
 EXIT_OK = 0

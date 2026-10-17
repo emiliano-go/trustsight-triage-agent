@@ -112,7 +112,7 @@ class Settings:
     feed_key_id: str = "triage-agent"
     github_token: str | None = None
     opencode_api_key: str | None = None
-    model: str = "opencode/mimo-v2.6-flash-free"
+    model: str = "opencode/longcat-2.5-preview-free"
     model_profile: str = "zen"
     model_explicit: bool = False
     job_root: str = "/job"
@@ -175,8 +175,8 @@ class Settings:
             or "triage-agent",
             github_token=_optional(e, "GITHUB_PERSONAL_ACCESS_TOKEN"),
             opencode_api_key=_optional(e, "OPENCODE_API_KEY"),
-            model=e.get("TRIAGE_MODEL", "opencode/mimo-v2.6-flash-free").strip()
-            or "opencode/mimo-v2.6-flash-free",
+            model=e.get("TRIAGE_MODEL", "opencode/longcat-2.5-preview-free").strip()
+            or "opencode/longcat-2.5-preview-free",
             model_profile=e.get("TRIAGE_MODEL_PROFILE", "zen").strip() or "zen",
             model_explicit=bool(e.get("TRIAGE_MODEL", "").strip()),
             job_root=e.get("TRIAGE_JOB_ROOT", "/job").strip() or "/job",

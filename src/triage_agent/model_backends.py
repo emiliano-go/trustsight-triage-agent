@@ -50,7 +50,7 @@ from collections.abc import Mapping
 
 from .config import ConfigError
 
-ZEN_MODEL = "opencode/mimo-v2.6-flash-free"
+ZEN_MODEL = "opencode/longcat-2.5-preview-free"
 ZEN_FALLBACKS = [
     "opencode/glm-5.3-flash-free",
     "opencode/nemotron-3.5-lightning-free",

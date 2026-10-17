@@ -59,7 +59,7 @@ services:
     environment:
       TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
       TRIAGE_POLL_INTERVAL_SECONDS: "120"
-      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/longcat-2.5-preview-free}
       TRIAGE_MODEL_PROFILE: ${TRIAGE_MODEL_PROFILE:-zen}
       # openai-compatible profile inputs; empty means unused. Values reach
       # job containers as bare env vars (name only) from the worker env.
@@ -113,7 +113,7 @@ services:
       - ${TRIAGE_DOCKER_GID:-988}
     environment:
       TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
-      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/longcat-2.5-preview-free}
       TRIAGE_MODEL_PROFILE: ${TRIAGE_MODEL_PROFILE:-zen}
       # openai-compatible profile inputs; empty means unused. Values reach
       # job containers as bare env vars (name only) from the worker env.
