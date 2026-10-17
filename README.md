@@ -3,13 +3,14 @@
 Turns TrustSight watcher alerts into verified verdicts, fix PRs, and
 confirmed-IOC alerts.
 
-The agent polls the TrustSight feed for `trustsight.alerts` events, enqueues
-one job per over-threshold `(package, version transition)`, and runs each job
-in a hardened container where an LLM agent (opencode) triages the alert. Every
-verdict is cross-checked by the deterministic TrustSight harness before
-anything leaves the container, every PR is re-verified by a backstop after the
-agent opens it, and nothing merges automatically: a maintainer reviews, signs,
-and merges every artifact.
+The agent polls the TrustSight feed for `trustsight.alerts` events and
+enqueues one job per over-threshold `(package, version transition)` — or a
+single aggregate job covering every package flagged by the same alert when
+the cycle names several. Each job runs in a hardened container where an LLM
+agent (opencode) triages the alert. Every verdict is cross-checked by the
+deterministic TrustSight harness before anything leaves the container, every
+PR is re-verified by a backstop after it is opened, and nothing merges
+automatically: a maintainer reviews, signs, and merges every artifact.
 
 > **Experimental.** The default model route is the free OpenCode Zen tier
 > (`opencode/mimo-v2.6-flash-free`), which may be discontinued or rate-limited at
@@ -35,7 +36,9 @@ and merges every artifact.
                     | (alerts, over_      |  + persistent seen_events
                     |  threshold) blocks  |  table (survives restarts)
                     +----------+----------+
-                               |  one job per (package, version transition)
+                               |  one job per (package, version transition);
+                               |  a multi-package alert becomes ONE
+                               |  aggregate job covering all its packages
                                v
                     +---------------------+
                     |    SQLite job queue  |  src/triage_agent/queue.py
@@ -70,6 +73,10 @@ and merges every artifact.
               |  TP: special_alert POSTs the               |
               |      fp_agent_alert envelope to ntfy and   |
               |      the Ed25519-signed feed sink          |
+              |  multi-package: the ORCHESTRATOR opens the |
+              |      aggregate FP PR (pr_open.py) and the  |
+              |      per-TP-package IOC PRs, then runs the |
+              |      same backstop over the aggregate      |
               +-------------------------------------------+
 ```
 
@@ -78,8 +85,9 @@ and merges every artifact.
 This repo does **not** depend on `trustsight-harness` as a Python package.
 The harness is already installed in the job image. Two surfaces are used:
 
-- **CLI**, from the pipeline: `harness fp_agent_verify --verdict <file>` and
-  `harness fp_agent_pr --result <file> --target-repo <repo> --date <day>`.
+- **CLI**, from the pipeline: `harness fp_agent_verify --verdict <file>`,
+  `harness fp_agent_pr --result <file> --target-repo <repo> --date <day>`,
+  and `harness fp_agent_alert --result <file>`.
   Object arguments travel as temp files (verdicts and results are capped near
   1 MiB, past argv limits), never as argv or stdin.
 - **MCP**, from inside the sandbox: the agent calls the `harness` MCP tools
@@ -101,7 +109,12 @@ version.
    aur_url, rules)` payload (UNIQUE in SQLite), with the full payload
    stored alongside for the worker. Entries with `ioc_matches` are
    enqueued with kind `ioc` and resolve to the alert path without an
-   agent run.
+   agent run. When a single alert names several `over_threshold` packages,
+   they do not become separate jobs: the dispatcher enqueues ONE
+   aggregate job whose payload is a `packages` list with every entry (the
+   queue's `package` column holds an informational
+   `<first> (+N more)` label), so the verified FPs are suppressed by a
+   single multi-package PR.
 2. **Prompt build** (`prompt.py`). Embeds the package, AUR URL, version
    transition, fired rules, and findings, and instructs the agent to write
    `/job/verdict.json` matching the schema exactly, then call the harness
@@ -160,6 +173,31 @@ version.
    `webhook_id.timestamp.body`, key as base64 PKCS#8 DER, deterministic
    webhook id so retried POSTs dedupe. The job only fails if no sink
    accepted the alert.
+8. **Multi-package jobs** (payload carries a `packages` list). When one
+   alert flags several packages, the dispatcher enqueues a single job whose
+   payload lists every flagged package. The pipeline then runs the usual
+   per-package agent analysis sequentially (one container run per package,
+   each with the analysis prompt variant that tells the agent not to touch
+   the GitHub tools), verifies every per-package verdict through the
+   harness, and splits the verified results:
+   - every verified **FP** package is aggregated into ONE PR: the harness
+     `fp_agent_pr` multi-package render (a `{"kind": "FP", "packages":
+     [...]}` result) produces the branch, a title of the form
+     `FP triage: pkg-a, pkg-b (+N more)`, a body with one `Package: <name>`
+     section and a `| Finding | False trigger | Fix |` table per package,
+     and one `data/fp-suppressions/<date>-<pkg>.json` file per package.
+     `pr_open.py` creates the branch, uploads every file, and opens the PR
+     over the GitHub REST API; the same PR backstop as single-package jobs
+     then re-fetches and compares it against an independent re-render.
+   - every verified **TP** package gets the confirmed-IOC flow for that
+     package only: the `trustsight.confirmed-ioc` alert (ntfy + signed
+     feed) plus an IOC register PR (`data/iocs/triage-<date>-<pkg>.json`,
+     rendered and opened the same way).
+   - **uncertain** packages produce no PR content and no alert; they are
+     recorded in the job's outcome reason. A job with only uncertain
+     packages ends `needs_review`; TP packages are handled before the
+     aggregate FP PR so a failure there cannot leave a half-open retry
+     behind.
 
 ## Configuration
 
@@ -227,6 +265,9 @@ Summary:
 - One verdict file, one PR at most, one alert at most, per job. If any tool
   errors, stop and report the error string; do not retry in a loop and do
   not improvise around a failed tool.
+- On a multi-package job (the prompt says so explicitly) the rules change:
+  never call the github tools and never open a PR. One verdict document per
+  package as usual; the orchestrator aggregates and opens the PRs itself.
 
 ## Security model
 
@@ -333,6 +374,8 @@ and pure, so tests pin the RNG and get exact delays.
 | `fp_agent_verify` returns `verified: false` | Job -> `failed`; the verify reason is recorded. The agent is instructed to stop before this on its own. |
 | `fp_agent_verify` CLI error | Job -> `failed` with the harness stderr excerpt. |
 | FP without a PR from the agent | Job -> `failed` ("no PR found"). |
+| Multi-package job: one package's agent run or verify fails | The whole job -> `failed`; nothing was opened yet for that job, so a retry re-runs every package cleanly. |
+| Multi-package job: mixed verdicts | Verified FPs go into the single aggregate PR; verified TPs get the confirmed-IOC alert plus an IOC register PR each; uncertain packages are listed in the outcome reason and produce no artifacts. |
 | PR backstop mismatch | The PR is closed via GitHub PATCH and the job -> `failed` with `title mismatch` / `body mismatch`. A failed close is noted in the reason. |
 | Backstop cannot render or reach GitHub | Job -> `failed` (backstop never raises; every failure is `ok=False`). |
 | TP alert rejected by all sinks | Job -> `failed`; the alert envelope is dropped (logged), never retried in-band. |
@@ -382,7 +425,7 @@ evidence, and the backstop/alert delivery stages integrate end to end. The
 composition is also covered offline (fake verify/render, real stubs) in
 `tests/test_dry_run.py`.
 
-137 offline tests cover the dispatcher, queue, verdict validation, pipeline
+170 offline tests cover the dispatcher, queue, verdict validation, pipeline
 composition, worker loop, docker backend (against a fake docker CLI),
 agent job, PR backstop (including discovery by branch), special alert,
 warp manager, and rate-limit policy; everything runs against fakes and

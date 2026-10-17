@@ -15,6 +15,9 @@ import base64
 import hashlib
 import json
 import logging
+import os
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 
@@ -37,6 +40,43 @@ class AlertResult:
     ntfy: bool = False
     feed: bool = False
     reason: str | None = None
+
+
+def harness_alert(
+    result: dict,
+    *,
+    cli: str = "harness",
+    timeout: int = 900,
+) -> dict:
+    """Render the confirmed-ioc envelope via `harness fp_agent_alert`.
+
+    The verified TP result travels as a temp file, matching
+    ``runner.harness_verify``.  Raises RuntimeError when the CLI fails.
+    """
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", encoding="utf-8", delete=False
+    ) as handle:
+        json.dump(result, handle)
+        path = handle.name
+    try:
+        proc = subprocess.run(
+            [cli, "fp_agent_alert", "--result", path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    finally:
+        os.unlink(path)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"harness fp_agent_alert exited {proc.returncode}:"
+            f" {proc.stderr.strip()[:512]}"
+        )
+    alert = json.loads(proc.stdout)
+    if isinstance(alert, dict) and alert.get("error"):
+        raise RuntimeError(f"harness fp_agent_alert: {alert['error']}")
+    return alert
 
 
 def sign_feed_body(key_b64: str, key_id: str, body: bytes) -> dict[str, str]:

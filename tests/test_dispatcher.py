@@ -148,3 +148,33 @@ def test_fetch_events_keeps_embedded_payload_without_extra_fetch():
     )
     assert fetch_events(client, "https://feed.example") == [full]
     assert len(client.requests) == 1
+
+
+def test_multi_package_alert_enqueues_one_aggregate_job(queue, alerts_event):
+    event = dict(alerts_event)
+    entry = alerts_event["over_threshold"][0]
+    second = dict(entry, package="other-pkg")
+    event["over_threshold"] = [entry, second]
+    client = FakeHttpClient(feed_rows([event]))
+    jobs = list(poll_once(client, "https://feed.example.org", queue,
+                          Deduper()))
+    assert len(jobs) == 1
+    job_id, label = jobs[0]
+    assert label == "hello-aur (+1 more)"
+    job = queue.get(job_id)
+    assert job.kind == "triage"
+    payload = job.payload_dict()
+    assert [p["package"] for p in payload["packages"]] == [
+        "hello-aur", "other-pkg"]
+    assert len(queue.by_status("queued")) == 1
+
+
+def test_single_package_alert_keeps_per_entry_jobs(queue, alerts_event):
+    client = FakeHttpClient(feed_rows([alerts_event]))
+    jobs = list(poll_once(client, "https://feed.example.org", queue,
+                          Deduper()))
+    assert len(jobs) == 1
+    job = queue.get(jobs[0][0])
+    payload = job.payload_dict()
+    assert "packages" not in payload
+    assert payload["package"] == "hello-aur"
