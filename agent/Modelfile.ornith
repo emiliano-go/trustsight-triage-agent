@@ -1,0 +1,19 @@
+# Ornith 1.5 9B as the local triage model (the model the runtime was tuned on).
+#
+#   ollama create ornith-9b-agent -f agent/Modelfile.ornith
+#   ollama show ornith-9b-agent --modelfile        # must match this file
+#
+# The GGUF is Ornith-1.5-9B.Q3_K_M.gguf (Qwen3.5 9B, Q3_K_M, native context
+# 262144). Ollama stores it as the blob
+# sha256:89d429bf5070d8ce1991c688a28022d1efdf7bc24dfdd1b86d3e8124ce91ae6c
+# (4,623,524,896 bytes); a different build shows a different digest.
+# FROM is host-specific: point it at your copy of the same file.
+FROM /data/models/ornith/Ornith-1.5-9B.Q3_K_M.gguf
+
+# Raw prompt pass-through. The runtime writes its own instruction text and a
+# single user turn; no chat template or system turn is applied.
+TEMPLATE {{ .Prompt }}
+
+# Rule bundles are ~21 KB. 64k holds a rule plus its evidence with room to
+# answer; the native 262144 is not needed and costs memory.
+PARAMETER num_ctx 65536

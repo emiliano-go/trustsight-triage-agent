@@ -1,11 +1,9 @@
 # Compose for the standalone TrustSight triage deployment.
 #
-# Two services share one SQLite queue volume:
-#
-#   dispatcher: polls the TrustSight feed and enqueues jobs
-#   worker:     claims jobs and runs each in a hardened one-shot container
-#               spawned as a SIBLING of this compose project, via the
-#               mounted docker socket
+# One service: the local-model watcher. It polls the TrustSight feed,
+# triages each new alert with the local model, and writes reports, verdicts
+# and (for TP) alert.json into the state volume. No opencode, no job
+# containers, no docker socket.
 #
 # The Dockerfile needs all three sibling checkouts in the build context
 # (the harness's [tool.uv.sources] expects ../trustsight), so the context
@@ -13,162 +11,44 @@
 #
 #   docker compose -f trustsight-triage-agent/docker-compose.yml up -d --build
 #
-# or, from this directory:  docker compose up -d --build
-#
-# Required configuration goes in a .env file next to this file (see
-# .env.example); GITHUB_TOKEN is the only required variable. Without it
-# both services start, log a warning, and idle: nothing is polled or run.
-#
-# SECURITY: mounting /var/run/docker.sock into the worker grants it (and
-# anything that compromises it) full control of the docker host. That is
-# the standard tradeoff for "spawn sibling containers" deployments and is
-# accepted here for a personal/single-tenant setup; the JOB containers it
-# spawns remain fully sandboxed (read-only rootfs, dropped capabilities,
-# non-root job user, no host mounts, no socket). For a stricter posture,
-# run `triage-agent worker` on the docker host as a systemd unit instead
-# and do not define the worker service (see README "Running in
-# production"); TRIAGE_DOCKER_HOST keeps the code path pluggable.
+# The model stays on the host (ollama). Compose maps host.docker.internal
+# to the host gateway; ollama must listen on 0.0.0.0:11434 and the host
+# firewall must allow this container to reach it. See .env.example.
 
 services:
-  dispatcher:
+  triage-agent:
     build:
       # Repo parent: contains trustsight/, trustsight-harness/ and
       # trustsight-triage-agent/ as siblings.
       context: ..
       dockerfile: trustsight-triage-agent/Dockerfile
     image: trustsight-triage-agent:latest
-    # No `user:` on purpose: the container starts as root so the
-    # entrypoint can setpriv-drop to the unprivileged `triage` user
-    # before exec'ing the command (docker/entrypoint.sh).
+    restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
       - /run
     cap_drop:
       - ALL
-    cap_add:
-      # The entrypoint runs as root only to create the job user's $HOME
-      # and setpriv-drop to the unprivileged user; these three caps are
-      # exactly what that bootstrap needs and are dropped before the job
-      # command runs.
-      - CHOWN
-      - SETUID
-      - SETGID
     security_opt:
       - no-new-privileges:true
+    # Explicit resolver: on hosts whose /etc/resolv.conf points at a
+    # loopback stub (systemd-resolved 127.0.0.53) Docker's embedded DNS
+    # forwards to an unreachable target and every lookup fails.
+    dns:
+      - ${TRIAGE_DOCKER_DNS:-1.1.1.1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
-      TRIAGE_POLL_INTERVAL_SECONDS: "120"
-      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
-      TRIAGE_MODEL_PROFILE: ${TRIAGE_MODEL_PROFILE:-zen}
-      # openai-compatible profile inputs; empty means unused. Values reach
-      # job containers as bare env vars (name only) from the worker env.
-      TRIAGE_MODEL_BASE_URL: ${TRIAGE_MODEL_BASE_URL:-}
-      TRIAGE_MODEL_NAME: ${TRIAGE_MODEL_NAME:-}
+      TRIAGE_WORKSPACE: /app
+      TRIAGE_STATE_DIR: /var/lib/triage
+      TRIAGE_MODEL_BASE_URL: ${TRIAGE_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+      TRIAGE_MODEL_NAME: ${TRIAGE_MODEL_NAME:-ornith-9b-agent:latest}
       TRIAGE_MODEL_API_KEY: ${TRIAGE_MODEL_API_KEY:-}
-      TRIAGE_MODEL_FALLBACKS: ${TRIAGE_MODEL_FALLBACKS:-}
-      TRIAGE_MODEL_REASONING: ${TRIAGE_MODEL_REASONING:-}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      # Zen (opencode) route key; required for the default "zen" profile.
-      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
-      # Explicit path: never rely on PATH alone for the harness CLI.
-      TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
-      TRUSTSIGHT_FEED_KEY: ${TRUSTSIGHT_FEED_KEY:-}
-      TRUSTSIGHT_FEED_KEY_ID: ${TRUSTSIGHT_FEED_KEY_ID:-triage-agent}
-      TRUSTSIGHT_FEED_URL: ${TRUSTSIGHT_FEED_URL:-https://watcher.trustsight.org}
-      TRUSTSIGHT_NTFY_WEBHOOK: ${TRUSTSIGHT_NTFY_WEBHOOK:-}
+      TRIAGE_INTERVAL: ${TRIAGE_INTERVAL:-300}
+      TRIAGE_ALERT: ${TRIAGE_ALERT:-1}
     volumes:
-      - triage-queue:/var/lib/triage
-    restart: unless-stopped
-
-  worker:
-    image: trustsight-triage-agent:latest
-    # Same image, different command. ENABLE_WARP_ROTATION stays off here:
-    # WARP runs inside each JOB container, not in the worker.
-    command:
-      - triage-agent
-      - worker
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /run
-    cap_drop:
-      - ALL
-    cap_add:
-      # The entrypoint runs as root only to create the job user's $HOME
-      # and setpriv-drop to the unprivileged user; these three caps are
-      # exactly what that bootstrap needs and are dropped before the job
-      # command runs.
-      - CHOWN
-      - SETUID
-      - SETGID
-    security_opt:
-      - no-new-privileges:true
-    group_add:
-      # Host gid that owns /var/run/docker.sock (root:docker 0660 by
-      # default). The job user needs it to talk to the mounted socket.
-      # Set TRIAGE_DOCKER_GID in .env to `stat -c %g /var/run/docker.sock`.
-      - ${TRIAGE_DOCKER_GID:-988}
-    environment:
-      TRIAGE_DB_PATH: /var/lib/triage/triage.sqlite3
-      TRIAGE_MODEL: ${TRIAGE_MODEL:-opencode/mimo-v2.6-flash-free}
-      TRIAGE_MODEL_PROFILE: ${TRIAGE_MODEL_PROFILE:-zen}
-      # openai-compatible profile inputs; empty means unused. Values reach
-      # job containers as bare env vars (name only) from the worker env.
-      TRIAGE_MODEL_BASE_URL: ${TRIAGE_MODEL_BASE_URL:-}
-      TRIAGE_MODEL_NAME: ${TRIAGE_MODEL_NAME:-}
-      TRIAGE_MODEL_API_KEY: ${TRIAGE_MODEL_API_KEY:-}
-      TRIAGE_MODEL_FALLBACKS: ${TRIAGE_MODEL_FALLBACKS:-}
-      TRIAGE_MODEL_REASONING: ${TRIAGE_MODEL_REASONING:-}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      # Zen (opencode) route key; required for the default "zen" profile.
-      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
-      # Warp rotation for job containers (default true; the backend renders
-      # it as ENABLE_WARP_ROTATION per job). Set false when the model
-      # gateway rejects WARP egress IPs.
-      TRIAGE_WARP_ROTATION: ${TRIAGE_WARP_ROTATION:-true}
-      TRIAGE_HARNESS_CLI: /app/trustsight-harness/.venv/bin/harness
-      # Job containers are spawned from this image; keep it identical to
-      # the image tag compose just built.
-      TRIAGE_IMAGE: trustsight-triage-agent:latest
-      # The socket-mounted deployment: the worker drives the host daemon.
-      TRIAGE_DOCKER_HOST: unix:///var/run/docker.sock
-      # Network the job containers attach to. Fixed name (declared below)
-      # so `docker compose up` from any project directory resolves it.
-      # This network has NO egress firewall by default: WARP rotation
-      # covers IP-level throttling, but if you want an allowlist, create
-      # your own restricted network and point TRIAGE_DOCKER_NETWORK at it.
-      TRIAGE_DOCKER_NETWORK: triage-jobs
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
-      TRUSTSIGHT_FEED_KEY: ${TRUSTSIGHT_FEED_KEY:-}
-      TRUSTSIGHT_FEED_KEY_ID: ${TRUSTSIGHT_FEED_KEY_ID:-triage-agent}
-      TRUSTSIGHT_FEED_URL: ${TRUSTSIGHT_FEED_URL:-https://watcher.trustsight.org}
-      TRUSTSIGHT_NTFY_WEBHOOK: ${TRUSTSIGHT_NTFY_WEBHOOK:-}
-      # Job staging root (prompt copies, per-attempt container logs).
-      TRIAGE_JOB_ROOT: /job
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - triage-queue:/var/lib/triage
-      - triage-jobs:/job
-    restart: unless-stopped
-    depends_on:
-      - dispatcher
-    networks:
-      # Attaching the worker is only a device to guarantee the fixed-name
-      # job network exists on `up`; job containers join it, the worker
-      # itself makes no compose-internal connections.
-      - triage-jobs
+      - triage-state:/var/lib/triage
 
 volumes:
-  triage-queue:
-  triage-jobs:
-
-networks:
-  # Referenced by name from TRIAGE_DOCKER_NETWORK; job containers join it.
-  # compose creates it on `up`; the worker's `docker run --network
-  # triage-jobs` then always resolves.
-  triage-jobs:
-    name: triage-jobs
+  triage-state:

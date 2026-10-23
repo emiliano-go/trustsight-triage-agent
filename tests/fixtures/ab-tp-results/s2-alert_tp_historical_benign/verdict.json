@@ -1,0 +1,38 @@
+{
+  "alert_slug": "historical/r003-benign-twin",
+  "confidence": "high",
+  "overall": "FP",
+  "package": "fake-browser-bin",
+  "rules": [
+    {
+      "agree": true,
+      "bad_practice_present": false,
+      "citation": "prepare() { echo 'bm90aWNlOiBidWlsZCBvaw==' | base64 -d > \"$srcdir/notice.txt\" }",
+      "cited": true,
+      "class": "malicious_false_positive",
+      "confidence": "high",
+      "ioc_entries": [],
+      "malicious_behaviour_present": false,
+      "malicious_citation": "$srcdir/notice.txt base64 -d; decoded payload = 'build ok'",
+      "malicious_citation_grounded": true,
+      "malicious_reasoning": "The R003 pattern matches syntactically, but the runtime-decoded payload is the benign text 'build ok' written to a file, not an executed command or IOC; no exfiltration, impersonation, or hidden payload exists.",
+      "reasoning": "The base64-decoded output is redirected to notice.txt (a file), not piped to an executing command; the decoded payload is just a printed 'build ok' message. This matches the rule card's printer's-quoted-text exclusion, so the rule stands down.",
+      "resolution": null,
+      "rule_id": "R003",
+      "samples": [
+        [
+          "False",
+          "False"
+        ],
+        [
+          "False",
+          "False"
+        ]
+      ],
+      "tp_twin": null,
+      "where": null
+    }
+  ],
+  "score": 80,
+  "score_threshold": 20
+}

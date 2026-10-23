@@ -1,0 +1,38 @@
+{
+  "harness": {
+    "type": "local",
+    "enabled": true,
+    "command": [
+      "uv",
+      "run",
+      "--directory",
+      "/home/eclipse/Documents/GitHub/trustsight-harness",
+      "--extra",
+      "mcp",
+      "harness-mcp"
+    ]
+  },
+  "aur": {
+    "type": "local",
+    "enabled": true,
+    "command": [
+      "/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv/bin/python",
+      "-m",
+      "triage_agent.aur_mcp"
+    ]
+  },
+  "rbg": {
+    "type": "local",
+    "enabled": true,
+    "command": [
+      "/usr/bin/python3",
+      "/home/eclipse/Documents/GitHub/harness/mcp_main.py"
+    ],
+    "environment": {
+      "HARNESS_ALLOWED_ROOTS": "/"
+    },
+    "arg_defaults": {
+      "root": "/home/eclipse/Documents/GitHub/trustsight"
+    }
+  }
+}

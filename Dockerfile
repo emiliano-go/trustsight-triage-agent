@@ -1,68 +1,27 @@
 # syntax=docker/dockerfile:1
 
-# TrustSight triage agent job image.
+# TrustSight triage agent image: the local-model watcher, no opencode.
 #
 # Build context must be the directory that contains all three sibling
 # checkouts (docker-compose.yml sets this to the repo parent):
 #     docker build -f trustsight-triage-agent/Dockerfile -t triage-agent ..
 #
-# Like trustsight-harness/Dockerfile, the image carries the sibling checkouts
-# side by side because the harness's [tool.uv.sources] expects ../trustsight.
+# The image carries trustsight/ and trustsight-harness/ beside this repo
+# because the harness's [tool.uv.sources] expects ../trustsight, and because
+# the runtime starts the harness MCP server from its checkout.
 
 FROM python:3.12-slim-bookworm
 
 LABEL org.opencontainers.image.title="trustsight-triage-agent" \
-      org.opencontainers.image.description="Triage agent: alerts to verified verdicts, PRs and IOC alerts" \
+      org.opencontainers.image.description="Local-model triage agent for TrustSight alerts" \
       org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Base tools: git (agent clones AUR repos read-only), curl and gpg (repo
-# keys, release downloads), nodejs/npm (opencode CLI).
+# git: the AUR MCP reads package histories; ca-certificates: AUR/feed TLS.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates curl git gpg nodejs npm \
+    && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
-
-# opencode CLI, pinned via npm (installs the `opencode` binary on PATH).
-RUN npm install -g opencode-ai@1.19.3
-
-# GitHub's official MCP server binary, pinned version + sha256 checksum.
-ARG GITHUB_MCP_VERSION=2.0.2
-ARG GITHUB_MCP_SHA256=815e27d931c796af0c97f24fd211e14f8a4607d4528377719a5ad2352086b0b0
-RUN curl -fsSL \
-    "https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz" \
-    -o /tmp/github-mcp-server.tar.gz \
-    && echo "${GITHUB_MCP_SHA256}  /tmp/github-mcp-server.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/github-mcp-server.tar.gz -C /usr/local/bin github-mcp-server \
-    && chmod +x /usr/local/bin/github-mcp-server \
-    && rm /tmp/github-mcp-server.tar.gz
-
-# Cloudflare WARP from Cloudflare's official apt repo. The package ships
-# warp-svc (the daemon) and warp-cli (the client). There is no systemd in
-# a container, so nothing starts here: the entrypoint launches warp-svc
-# manually when ENABLE_WARP_ROTATION=1.
-RUN curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
-    | gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ bookworm main" \
-    > /etc/apt/sources.list.d/cloudflare-client.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends cloudflare-warp \
-    && rm -rf /var/lib/apt/lists/*
-
-# Static docker CLI, pinned version + sha256, for the compose-mode worker:
-# it drives the HOST daemon through the mounted /var/run/docker.sock (no
-# daemon ships in this image). Same checksum pattern as github-mcp-server.
-ARG DOCKER_CLI_VERSION=29.8.2
-ARG DOCKER_CLI_SHA256=995d1ef289677f74fd58d8d2c35727b6a4ee389c69db8638a3e42d0487aa5b0f
-RUN curl -fsSL \
-    "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
-    -o /tmp/docker-cli.tgz \
-    && echo "${DOCKER_CLI_SHA256}  /tmp/docker-cli.tgz" | sha256sum -c - \
-    && tar -xzf /tmp/docker-cli.tgz -C /usr/local/bin --strip-components=1 \
-       docker/docker \
-    && chmod +x /usr/local/bin/docker \
-    && rm /tmp/docker-cli.tgz
 
 RUN pip install --no-cache-dir uv==0.12.13
 
@@ -75,28 +34,25 @@ COPY trustsight /app/trustsight
 COPY trustsight-harness /app/trustsight-harness
 COPY trustsight-triage-agent /app/trustsight-triage-agent
 
-# Harness first (its [tool.uv.sources] needs the sibling trustsight), then
-# the triage agent itself. --locked refuses to resolve fresh.
+# Harness first (its [tool.uv.sources] needs the sibling trustsight), with
+# the mcp extra the runtime launches it with; then the triage agent.
 RUN cd /app/trustsight-harness \
-    && uv sync --locked --no-install-project --python /usr/local/bin/python3 \
-    && uv sync --locked --python /usr/local/bin/python3 \
+    && uv sync --locked --extra mcp --python /usr/local/bin/python3 \
     && cd /app/trustsight-triage-agent \
     && uv sync --locked --python /usr/local/bin/python3
 
-ENV PATH="/app/trustsight-harness/.venv/bin:/app/trustsight-triage-agent/.venv/bin:${PATH}" \
-    HARNESS_MCP_COMMAND="/app/trustsight-harness/.venv/bin/harness-mcp"
+ENV TRIAGE_WORKSPACE=/app \
+    TRIAGE_STATE_DIR=/var/lib/triage \
+    HOME=/tmp/home \
+    XDG_CACHE_HOME=/tmp/cache \
+    PATH="/app/trustsight-harness/.venv/bin:/app/trustsight-triage-agent/.venv/bin:${PATH}"
 
 RUN useradd --create-home --shell /usr/sbin/nologin triage \
-    && mkdir -p /job /var/lib/triage \
-    && chown -R triage:triage /job /var/lib/triage \
-    /app/trustsight-triage-agent
-ENV HOME=/tmp/home
-# Root on purpose: docker/entrypoint.sh runs the privileged bootstrap
-# (warp-svc needs the TUN device and root state) and setpriv-drops to the
-# unprivileged `triage` user before exec'ing the job. The job never runs
-# as root; do not add -u/--user overrides (they would skip the drop).
-USER root
+    && mkdir -p /var/lib/triage /tmp/home /tmp/cache \
+    && chown -R triage:triage /var/lib/triage /tmp/home /tmp/cache
 
-COPY trustsight-triage-agent/docker/entrypoint.sh /usr/local/bin/triage-entrypoint
-ENTRYPOINT ["triage-entrypoint"]
-CMD ["triage-agent", "dispatch"]
+USER triage
+
+# Foreground watcher; compose/systemd own the process lifetime. The model
+# endpoint is TRIAGE_MODEL_BASE_URL (default 127.0.0.1:11434/v1).
+CMD ["/app/trustsight-triage-agent/bin/triage-agent", "run"]

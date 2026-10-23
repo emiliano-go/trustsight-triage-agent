@@ -1,0 +1,45 @@
+{
+  "alert_slug": "synthetic/r001-benign-twin",
+  "confidence": "high",
+  "overall": "FP",
+  "package": "malicious-pkg",
+  "rules": [
+    {
+      "agree": true,
+      "bad_practice_present": false,
+      "citation": "PKGBUILD line 12: curl -o \"$srcdir/helper.pem\" https://example.com/helper.pem",
+      "cited": true,
+      "class": "malicious_false_positive",
+      "confidence": "high",
+      "ioc_entries": [
+        {
+          "confidence": "low",
+          "provenance": "helper.pem download URL in the PKGBUILD curl -o line (R001 false trigger)",
+          "type": "domain",
+          "value": "example.com"
+        }
+      ],
+      "malicious_behaviour_present": false,
+      "malicious_citation": "curl -o \"$srcdir/helper.pem\" https://example.com/helper.pem",
+      "malicious_citation_grounded": true,
+      "malicious_reasoning": "The fired line is a `curl -o` download that writes a helper PEM into the source directory; there is no pipe to a shell, so it is an ordinary fetch, not a fetch-and-execute pipeline. Ignoring what R001 was meant to catch, the actual behaviour is benign.",
+      "reasoning": "The added line downloads helper.pem into srcdir and contains no shell pipe (there is no `curl | sh/bash/...` pipeline); it is a normal idiom of fetching an auxiliary file after the source download, so rule R001's curl-to-shell claim does not apply here.",
+      "resolution": "Tighten R001's regex so that a bare `curl ... -o <url>` download (fetch-to-file, no pipe) does not match; only require the unescaped pipe to be followed by an executable/command token (bash/sh/python/perl/etc.), excluding terminal tokens that are URL-only download targets like `-o https://...`. This stops the false trigger on the `curl -o helper.pem` line while a real fetch-and-exec pipeline keeps firing.",
+      "rule_id": "R001",
+      "samples": [
+        [
+          "False",
+          "False"
+        ],
+        [
+          "False",
+          "False"
+        ]
+      ],
+      "tp_twin": "A genuine `curl ... | bash` / `curl ... | sh` / `curl ... | python3` pipeline (unescaped pipe followed by an actual command token) must keep matching.",
+      "where": "src/trustsight/analysis/composition.py \u2014 R001 pattern (rule card, printed-text section)"
+    }
+  ],
+  "score": 80,
+  "score_threshold": 20
+}

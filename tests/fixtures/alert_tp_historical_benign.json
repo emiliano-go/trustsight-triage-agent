@@ -1,0 +1,37 @@
+{
+  "package": "fake-browser-bin",
+  "alert_slug": "historical/r003-benign-twin",
+  "score": 80,
+  "old_version": "1.0-1",
+  "new_version": "1.0-2",
+  "rules": ["R003"],
+  "findings": [
+    {
+      "rule_id": "R003",
+      "severity": "CRITICAL",
+      "weight": 40,
+      "reason": "base64 decode near a prepare() block",
+      "file": "PKGBUILD",
+      "line": 14
+    }
+  ],
+  "tree": {
+    "PKGBUILD": "# Maintainer: Alice <alice@example.com>\npkgname=fake-browser-bin\npkgver=1.0\npkgrel=1\npkgdesc=\"A browser build\"\narch=('x86_64')\nurl=\"https://example.com/fake-browser\"\nlicense=('MIT')\ndepends=('glibc')\nsource=(\"fake-browser-${pkgver}.tar.gz::https://example.com/fake-browser-${pkgver}.tar.gz\")\nsha256sums=('SKIP')\n\nprepare() {\n  echo 'bm90aWNlOiBidWlsZCBvaw==' | base64 -d > \"$srcdir/notice.txt\"\n}\n\nbuild() {\n  cd \"$srcdir/fake-browser-$pkgver\"\n  make\n}\n\npackage() {\n  cd \"$srcdir/fake-browser-$pkgver\"\n  install -Dm755 fake-browser \"$pkgdir/usr/bin/fake-browser\"\n}\n"
+  },
+  "diff": "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,3 +1,7 @@\n # Maintainer: Alice <alice@example.com>\n pkgname=fake-browser-bin\n pkgver=1.0\n+\n+prepare() {\n+  echo 'bm90aWNlOiBidWlsZCBvaw==' | base64 -d > \"$srcdir/notice.txt\"\n+}\n",
+  "triage": {
+    "score": 80,
+    "over_threshold": true,
+    "findings": [
+      {
+        "rule_id": "R003",
+        "severity": "CRITICAL",
+        "weight": 40,
+        "reason": "base64 decode near a prepare() block",
+        "file": "PKGBUILD",
+        "line": 14
+      }
+    ],
+    "diff": "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,3 +1,7 @@\n # Maintainer: Alice <alice@example.com>\n pkgname=fake-browser-bin\n pkgver=1.0\n+\n+prepare() {\n+  echo 'bm90aWNlOiBidWlsZCBvaw==' | base64 -d > \"$srcdir/notice.txt\"\n+}\n"
+  }
+}
