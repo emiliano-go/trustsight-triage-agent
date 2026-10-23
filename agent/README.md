@@ -62,23 +62,46 @@ FROM qwen3.5:4b-q4_K_M
 PARAMETER num_ctx 32768
 ```
 
-## Measured 3B/4B ladder
+## Measured small-model ladder
 
-Four fixtures, `samples=1`, `num_ctx 32768`, thinking off (`reasoning_effort:
-none`), RTX 3070 8 GiB (all models 100% GPU):
+Four fixtures, `samples=1`, the full 21 KB bundle, thinking off
+(`reasoning_effort: none`), RTX 3070 8 GiB. "disputed" means the model said
+"malicious" but the package had no execution/effect construct, so the guard
+sent it to review instead of alerting.
 
-| model | TP fixtures | benign twins | notes |
-|---|---|---|---|
-| ornith-9b (Q3) | 2/2 TP | 2/2 FP | baseline |
-| qwen3.5-4b (Q4) | 2/2 TP | 1/2 FP, 1 disputed | best small model; citations grounded |
-| nemotron-3-nano-4b | 2/2 TP | 0/2 FP, 2 disputed | all twins to human review |
-| granite-4.2-3b | 2/2 TP | 0/2 FP, 2 disputed | all twins to human review |
+| model | size | TP | benign twins | notes |
+|---|---|---|---|---|
+| ornith-9b q3 | 4.6 GB | 2/2 | 2/2 FP | baseline; still the best |
+| qwen3.5-4b q4 | 3.3 GB | 2/2 | 1 FP, 1 disputed | flaky on the synthetic twin |
+| gemma4-e4b q4 | 6.6 GB | 2/2 | 1 FP, 1 disputed | fastest small model (0.8-1.8s/call), no alert |
+| nemotron-3-nano-4b | 2.8 GB | 2/2 | 0 FP, 2 disputed | |
+| granite-4.2-3b | 2.2 GB | 2/2 | 0 FP, 2 disputed | |
+| phi4-mini 3.8b | 2.5 GB | 2/2 | 0 FP, 2 disputed | one TP citation was ungrounded |
+| qwen3-8b | 5.2 GB | 2/2 | 0 FP, 2 disputed | 6-14s/call, occasional missing JSON |
+| granite-4.2-8b | 5.3 GB | 2/2 | 1 FP, 1 disputed | 10-22s/call |
+| ministral-3 3b | 3.0 GB | 1/2 | 0 FP | JSON unreliable; rejected |
 
-Before the malicious-effect guard, all three small models called the plain
-`curl -o` benign twin malicious and emitted a confirmed-IOC alert. The guard
-turns that into `uncertain` (no alert) but does not recover the FP: only the
-9B and Qwen (once) classified the twins correctly. TP recall is not the
-problem at 4B; FP precision is.
+Rows at 8B and below the 4 GB line were measured with the standalone
+evaluator using the identical bundle and split questions; Qwen 4B, Gemma
+E4B, Nemotron and Granite 3B were also confirmed through the full runtime.
+
+No 6-8B model beats the 9B on FP precision. Size is not the lever here:
+the larger candidates are slower, spill on this GPU, and still hallucinate
+the `curl -o` pipe. The guard is what keeps their mistakes from becoming
+alerts.
+
+### What did not help
+
+- **Trimming the rule source** (21 KB -> 6.6 KB): twins improved, but one
+  Qwen run then rejected a real TP. **Package-only** (1.1 KB) made Qwen
+  miss both TPs. The rule card/source is needed for recall; keep the full
+  bundle.
+- **JSON mode** (`response_format: json_object`): same answers, no gain.
+- **8B over 4B**: no accuracy gain, 2-4x slower.
+
+If a smaller model is used, the honest system is escalation: run the small
+model, and send `uncertain`/disputed cases to the 9B. On this GPU the two
+do not fit together, so that costs a model swap (~10-20s).
 
 ### Context ladder (qwen3.5-4b, 21 KB bundle)
 
