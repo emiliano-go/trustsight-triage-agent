@@ -1,0 +1,6 @@
+# Nemotron-3-Nano 4B (Q4_K_M) as a triage candidate.
+#
+#   ollama pull nemotron-3-nano:4b
+#   ollama create nemotron-4b-triage -f agent/Modelfile.nemotron-4b
+FROM nemotron-3-nano:4b
+PARAMETER num_ctx 32768

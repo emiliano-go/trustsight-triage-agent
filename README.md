@@ -28,17 +28,25 @@ separate calls, so a 9B model never has to hold a whole verdict in one turn:
 3. **ASSEMBLE** - `report.md`, `verdict.json`, an append-only ledger, and
    `alert.json` for a TP when `--alert` is on.
 
-Two rules keep the split honest:
+Three rules keep the split honest:
 
 - A TP claim must quote the package, and the quote must appear in the
   evidence the runtime actually fetched.
 - An alert at or above `--score-threshold` (default 20) cannot be called
   "not malicious" without a grounded citation. A missing answer is
   `uncertain`, never a quiet FP.
+- A "malicious" answer must be backed by a concrete mechanism somewhere in
+  the package evidence (execution, exfiltration, persistence). A model that
+  hallucinates a pipe on a plain `curl -o` download is disputed to
+  `uncertain`; it never becomes a TP or an alert.
 
 The runtime also decodes `echo <base64> | base64 -d` payloads itself and puts
 the plaintext in the bundle. A small model asked to eyeball base64 invents a
 plausible plaintext; the runtime does the arithmetic.
+
+The malicious-effect check is a floor, not a classifier: it never proves
+malice, it only refuses a "yes" when the package contains no mechanism at
+all. Extend its pattern list when a new true-positive shape appears.
 
 ## Requirements
 
@@ -160,10 +168,15 @@ so they never touch the live AUR:
 scripts/ab_tp_fixtures.sh            # all four at samples=1 and samples=2
 ```
 
-The recorded run in `tests/fixtures/ab-tp-results/` produced 4/4 TP at both
-sample counts, both twins rejected as malicious false positives, and one IOC
-(`evil.sh`) per alert. On these fixtures `samples=1` and `samples=2` agree, so
-1 is the default-cost choice; 2 is a reliability hedge for missing answers.
+The recorded 9B run in `tests/fixtures/ab-tp-results/` produced 4/4 TP at
+both sample counts, both twins rejected as malicious false positives, and one
+IOC (`evil.sh`) per alert. On these fixtures `samples=1` and `samples=2`
+agree, so 1 is the default-cost choice; 2 is a reliability hedge for missing
+answers.
+
+`agent/README.md` records the 3B/4B model ladder measured on the same
+fixtures and the context-size result (4k truncates and fails, 8k is the
+minimum, 16-32k is safe).
 
 ## Test and lint
 

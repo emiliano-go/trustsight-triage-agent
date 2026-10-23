@@ -1,0 +1,10 @@
+# Qwen3.5 4B (Q4_K_M) as a triage candidate.
+#
+#   ollama pull qwen3.5:4b-q4_K_M
+#   ollama create qwen35-4b-triage -f agent/Modelfile.qwen35-4b
+#
+# Ollama on this GPU (<24 GiB VRAM) defaults to a 4k context, which would
+# truncate the ~6k-token triage bundle. 32k holds the bundle plus room for
+# larger real PKGBUILDs.
+FROM qwen3.5:4b-q4_K_M
+PARAMETER num_ctx 32768

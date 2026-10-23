@@ -53,9 +53,45 @@ Two details matter and are easy to lose:
 `Ornith-1.5-9B.Q3_K_M.gguf`
 (sha256 `89d429bf5070d8ce1991c688a28022d1efdf7bc24dfdd1b86d3e8124ce91ae6c`).
 
-A smaller model on the same OpenAI-compatible endpoint is a drop-in:
-`--model qwen3.5:4b` (verify its chat template / thinking setting first; the
-runtime sends `reasoning_effort: none`).
+A smaller model on the same OpenAI-compatible endpoint is a drop-in. Build
+a wrapper with a real context window (the library tag otherwise runs at
+Ollama's VRAM default, 4k here):
+
+```
+FROM qwen3.5:4b-q4_K_M
+PARAMETER num_ctx 32768
+```
+
+## Measured 3B/4B ladder
+
+Four fixtures, `samples=1`, `num_ctx 32768`, thinking off (`reasoning_effort:
+none`), RTX 3070 8 GiB (all models 100% GPU):
+
+| model | TP fixtures | benign twins | notes |
+|---|---|---|---|
+| ornith-9b (Q3) | 2/2 TP | 2/2 FP | baseline |
+| qwen3.5-4b (Q4) | 2/2 TP | 1/2 FP, 1 disputed | best small model; citations grounded |
+| nemotron-3-nano-4b | 2/2 TP | 0/2 FP, 2 disputed | all twins to human review |
+| granite-4.2-3b | 2/2 TP | 0/2 FP, 2 disputed | all twins to human review |
+
+Before the malicious-effect guard, all three small models called the plain
+`curl -o` benign twin malicious and emitted a confirmed-IOC alert. The guard
+turns that into `uncertain` (no alert) but does not recover the FP: only the
+9B and Qwen (once) classified the twins correctly. TP recall is not the
+problem at 4B; FP precision is.
+
+### Context ladder (qwen3.5-4b, 21 KB bundle)
+
+| `num_ctx` | result | prompt tokens seen |
+|---|---|---|
+| 4096 | both TPs `uncertain`, answers were not JSON | 2050 of 7232 (truncated) |
+| 8192 | both TPs correct | 7232 (fits) |
+| 16384 | both TPs correct | - |
+| 32768 | both TPs correct | - |
+
+4k is fatal; 8k is the bare minimum for this bundle; 16k is the safe floor
+and 32k the default (headroom for larger real PKGBUILDs). More than 32k is
+not an accuracy lever.
 
 ## MCP servers
 

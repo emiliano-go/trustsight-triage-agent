@@ -631,6 +631,23 @@ class Snapshot:
             json.dumps(finding or {}),
         ])
 
+    async def package_evidence(self) -> str:
+        """Just the package: tree, diff, decoded payloads, extra files.
+
+        The rule card, rule source, finding metadata and feed triage are
+        excluded: they describe the suspicion, not the package, and a
+        keyword in the card must never satisfy an effect check.
+        """
+
+        pkgbuild = await self.pkgbuild()
+        diff = str(self.alert.get("diff") or "")
+        return "\n".join([
+            pkgbuild,
+            diff,
+            *decoded_payloads(pkgbuild + "\n" + diff),
+            await self.extra_files(),
+        ])
+
     async def extra_files(self) -> str:
         """Every non-PKGBUILD file of the snapshot (.install, patches)."""
 
@@ -1381,6 +1398,43 @@ def citation_ok(bad_cite, evil_v, evil_cite, evil_grounded: bool,
             and (evil_grounded or not need_grounding))
 
 
+_SHELLS = (r"(?:/(?:usr/)?bin/)?(?:ba|z|da|k|mk|pd|ya|po|a)?sh\b"
+           r"|busybox\s+(?:ash|sh)|python3?|perl|ruby|node|php|lua")
+_MALICIOUS_EFFECT = tuple(re.compile(p) for p in (
+    # Fetch or decode piped into an interpreter (R001/R003 shapes).
+    r"\|\s*(?:sudo\s+|doas\s+|env\s+)?(?:" + _SHELLS + r")\b",
+    r"\bbase64\s+(?:-d|--decode)\b[^\n]*\|",
+    # Interpreter-direct invocation of a string.
+    r"\beval\b", r"\bsh\s+-c\b",
+    r"\bsource\s+/dev/stdin\b|\.\s+/dev/stdin\b",
+    # Network exfiltration or a reverse shell.
+    r"/dev/tcp/", r"\b(?:nc|ncat|netcat)\s+[^\n]*\s\d{2,5}\b",
+    r"\bcurl\b[^\n]*(?:\s-d\s*@|--data(?:-binary)?\s+@|\s-F\s+\S+=@)",
+    r"\bwget\b[^\n]*--post-(?:data|file)",
+    # Writes or persistence outside the build directories.
+    r"(?:>|>>)\s*/(?:etc|root|home|usr/local|var/spool/cron)/",
+    r"\b(?:useradd|adduser|chpasswd)\b", r"authorized_keys", r"\bcrontab\b",
+    r"\brm\s+-[a-z]*[rf][a-z]*\s+/(?:\s|$|\*)",
+    # Download-then-run and local-script execution shapes.
+    r"(?:^|[;&|]\s*|\n\s*)(?:sudo\s+|doas\s+)?(?:ba|z|da|k)?sh\s+\S+",
+    r"(?:^|[;&|]\s*|\n\s*)\./[^\s]+",
+    r"(?:^|[;&|]\s*|\n\s*)(?:python3?|perl|ruby|node|php|lua)\s+"
+    r"\S+\.(?:py|pl|rb|js|php|lua)\b",
+))
+
+
+def has_malicious_effect(text: str) -> bool:
+    """Is there a concrete mechanism for harm anywhere in the package?
+
+    This gates a *yes* answer only: a model may not call a package
+    malicious when its evidence contains no execution, exfiltration or
+    persistence construct at all. A fetch to a file, a normal build
+    command, and even a suspicious URL are not enough on their own.
+    """
+
+    return any(pattern.search(text) for pattern in _MALICIOUS_EFFECT)
+
+
 def class_from_facts(bad_practice: bool | None,
                      malicious: bool | None) -> str:
     """The Standards mapping, applied mechanically to the two facts.
@@ -1438,6 +1492,7 @@ async def triage_package(hub: McpHub, snapshot: Snapshot, alert: dict,
     score = alert.get("score")
     threshold = getattr(args, "score_threshold", 20)
     high_score = isinstance(score, (int, float)) and score >= threshold
+    effect_text = await snapshot.package_evidence()
     per_rule: list[dict] = []
     for rule in rules:
         finding = next((f for f in findings
@@ -1473,6 +1528,7 @@ async def triage_package(hub: McpHub, snapshot: Snapshot, alert: dict,
         answered = [(b, e, c) for (b, e), c in zip(samples, cites, strict=False)
                     if b is not None or e is not None]
         chosen: dict = {}
+        disputed = False
         if not answered:
             bad_v = evil_v = None
             klass, agree, cited = "uncertain", False, False
@@ -1493,6 +1549,14 @@ async def triage_package(hub: McpHub, snapshot: Snapshot, alert: dict,
             need_grounding = evil_v is True or high_score
             cited = citation_ok(bad_cite, evil_v, evil_cite, evil_grounded,
                                 need_grounding)
+            # A "yes" with no mechanism in the package is a model
+            # hallucination (typically a pipe that is not there). It may not
+            # become a TP or an alert; it goes to human review instead.
+            disputed = evil_v is True and not has_malicious_effect(effect_text)
+            if disputed:
+                klass, cited = "uncertain", False
+                log(f"[triage {rule}] Q2 yes but no execution/effect "
+                    "construct in the package evidence; disputed")
         confs = [c["bad"].get("confidence") for c in cites]
         confs += [c["evil"].get("confidence") for c in cites
                   if evil_v is True]
@@ -1501,10 +1565,16 @@ async def triage_package(hub: McpHub, snapshot: Snapshot, alert: dict,
             {0: "high", 1: "medium", 2: "low"}[max(
                 rank.get(str(c), 1) for c in confs or ["medium"])])
 
-        solve = await ask_json(
-            phase, head + SOLVE_QUESTION.replace("%(rule)s", rule).replace(
-                "%(klass)s", klass), rule,
-            keys=("resolution",), log=log)
+        if disputed:
+            solve = {"resolution":
+                     "Disputed: the malicious answer has no execution, "
+                     "exfiltration or persistence mechanism in the package "
+                     "evidence. Human review required."}
+        else:
+            solve = await ask_json(
+                phase, head + SOLVE_QUESTION.replace("%(rule)s", rule).replace(
+                    "%(klass)s", klass), rule,
+                keys=("resolution",), log=log)
         record = {
             "rule_id": rule,
             "class": klass,

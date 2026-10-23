@@ -1,0 +1,6 @@
+# Granite 4.2 3B (Q4_K_M) as a triage candidate.
+#
+#   ollama pull granite4.2:3b
+#   ollama create granite-3b-triage -f agent/Modelfile.granite-3b
+FROM granite4.2:3b
+PARAMETER num_ctx 32768
