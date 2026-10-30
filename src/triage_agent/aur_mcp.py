@@ -85,10 +85,18 @@ def fetch_snapshot(package: str) -> dict[str, bytes]:
     data = _http_get(SNAPSHOT_URL.format(name))
     files: dict[str, bytes] = {}
     total = 0
+    declared_total = 0
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
         for member in archive:
             if not member.isfile():
                 continue
+            # The header's declared size is attacker-controlled, and a
+            # compressible member expands far past the compressed cap.  Charge
+            # it before reading; otherwise tarfile decompresses the body just
+            # to skip it.
+            declared_total += max(0, int(getattr(member, "size", 0) or 0))
+            if declared_total > MAX_SNAPSHOT_TOTAL:
+                break
             parts = Path(member.name).parts
             # The snapshot root is <base>/; strip it and refuse anything
             # that tries to escape (absolute paths, dotdots, nesting).

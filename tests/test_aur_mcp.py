@@ -165,3 +165,12 @@ def test_output_is_json_serializable(monkeypatch):
     json.dumps(aur_mcp.aur_file_impl("j-pkg", "PKGBUILD"))
     monkeypatch.setattr(aur_mcp.subprocess, "run", _git_runner())
     json.dumps(aur_mcp.aur_git_log_impl("j-pkg"))
+
+
+class TestDeclaredSizeCap:
+    def test_refuses_a_declared_size_bomb(self, monkeypatch):
+        monkeypatch.setattr(aur_mcp, "MAX_SNAPSHOT_TOTAL", 16)
+        monkeypatch.setattr(aur_mcp, "MAX_FILE_BYTES", 8)
+        data = _tarball({"huge": b"x" * 1024, "PKGBUILD": b"a=1"})
+        monkeypatch.setattr(aur_mcp, "_http_get", lambda url: data)
+        assert aur_mcp.fetch_snapshot("bomb-pkg") == {}
