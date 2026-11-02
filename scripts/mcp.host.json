@@ -29,7 +29,7 @@
       "/home/eclipse/Documents/GitHub/harness/mcp_main.py"
     ],
     "environment": {
-      "HARNESS_ALLOWED_ROOTS": "/"
+      "HARNESS_MCP_ALLOWED_ROOTS": "/home/eclipse/Documents/GitHub/trustsight"
     },
     "arg_defaults": {
       "root": "/home/eclipse/Documents/GitHub/trustsight"
