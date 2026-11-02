@@ -36,6 +36,7 @@ import argparse
 import asyncio
 import base64
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -547,7 +548,10 @@ def default_mcp_config(workspace: Path, triage_repo: Path,
         config["rbg"] = {
             "type": "local", "enabled": True,
             "command": ["/usr/bin/python3", str(rbg_repo / "mcp_main.py")],
-            "environment": {"HARNESS_ALLOWED_ROOTS": "/"},
+            "environment": {
+                "HARNESS_MCP_ALLOWED_ROOTS":
+                    "/home/eclipse/Documents/GitHub/trustsight",
+            },
             "arg_defaults": {"root": str(workspace / "trustsight")},
         }
     return config
@@ -1122,7 +1126,8 @@ async def run(args, alert: dict | None, mcp_config: dict,
                     break
                 question += ("\n\nThat answer was not the required JSON. "
                              "Return the one JSON object now.")
-            (out_dir / f"answer-{rule}.txt").write_text(answer)
+            safe_rule = _safe_component(rule, "rule", _SAFE_RULE_RE)
+            (out_dir / f"answer-{safe_rule}.txt").write_text(answer)
             doc = _json_doc(answer) or {"rule_id": rule, "class": "uncertain"}
             doc["rule_id"] = doc.get("rule_id") or rule
             fix = doc.get("fix")
@@ -1443,9 +1448,10 @@ async def triage_package(hub: McpHub, snapshot: Snapshot, alert: dict,
         finding = next((f for f in findings
                         if str(f.get("rule", f.get("rule_id", ""))) == rule),
                        None)
+        safe_rule = _safe_component(rule, "rule", _SAFE_RULE_RE)
         bundle = await rule_bundle(snapshot, Path(args.repo_root), alert,
                                    rule, finding, log=log)
-        (out_dir / f"bundle-{rule}.txt").write_text(bundle)
+        (out_dir / f"bundle-{safe_rule}.txt").write_text(bundle)
         evidence = await snapshot.grounded_evidence(finding)
         head = (f"Alert for AUR package {alert.get('package')} "
                 f"({alert.get('old_version')} to {alert.get('new_version')})."
@@ -1653,6 +1659,18 @@ def ledger_slugs(ledger: Path) -> set[str]:
     return out
 
 
+_SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9@_+][A-Za-z0-9@._+-]{0,254}$")
+_SAFE_RULE_RE = re.compile(r"^[A-Za-z]\d{3}$")
+
+
+def _safe_component(value, fallback: str, pattern) -> str:
+    text = str(value or "").strip()
+    if pattern.fullmatch(text):
+        return text
+    digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+    return f"{fallback}-{digest}"
+
+
 def ledger_append(ledger: Path, entry: dict) -> None:
     with ledger.open("a") as fh:
         fh.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -1663,10 +1681,11 @@ async def triage_alert(hub: McpHub, args, alert: dict, rules: list[str],
     """Triage one package and write its report, verdict and ledger line."""
 
     state, ledger = state_paths(args)
-    slug = alert.get("alert_slug") or "manual"
-    package = alert.get("package") or "unknown"
-    safe_slug = slug.replace("/", "-")
-    out_dir = Path(args.out_dir) / safe_slug / package
+    slug = str(alert.get("alert_slug") or "manual")
+    package = str(alert.get("package") or "unknown")
+    safe_slug = _safe_component(slug, "alert", re.compile(r"^[A-Za-z0-9._-]{1,120}$"))
+    safe_package = _safe_component(package, "pkg", _SAFE_PACKAGE_RE)
+    out_dir = Path(args.out_dir) / safe_slug / safe_package
     out_dir.mkdir(parents=True, exist_ok=True)
     snapshot = Snapshot(hub, alert, log=log)
     doc = await triage_package(hub, snapshot, alert, rules, findings, args,

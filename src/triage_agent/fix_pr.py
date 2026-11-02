@@ -59,6 +59,21 @@ def _ascii_lines(diff: str) -> None:
             raise FixError("double hyphen separator is not allowed")
 
 
+
+def _diff_paths(diff: str) -> list[str]:
+    """Every path named by a unified diff's ---/+++ headers."""
+    out: list[str] = []
+    for line in diff.splitlines():
+        if not (line.startswith("--- ") or line.startswith("+++ ")):
+            continue
+        target = line[4:].split("\t", 1)[0].strip()
+        if target == "/dev/null":
+            continue
+        if target.startswith(("a/", "b/")):
+            target = target[2:]
+        out.append(target)
+    return out
+
 def validate_fix(entry: dict) -> dict:
     """Validate one code_fixes entry; returns the normalized entry."""
 
@@ -80,6 +95,13 @@ def validate_fix(entry: dict) -> dict:
     if added > MAX_ADDED_LINES:
         raise FixError("diff exceeds the added-line cap")
     _ascii_lines(diff)
+    for target in _diff_paths(diff):
+        try:
+            _safe_path(target)
+        except FixError as exc:
+            raise FixError(f"diff touches a disallowed path {target!r}: {exc}") from exc
+    if path not in _diff_paths(diff):
+        raise FixError("diff headers do not name the declared path")
     return {"path": path, "diff": diff, "summary": entry["summary"],
             "linked_finding": entry["linked_finding"]}
 
@@ -161,6 +183,13 @@ def commit_push_pr(worktree: Path, *, branch: str, repo: str, base: str,
     """Commit the applied fixes, push the branch, open the PR."""
 
     _git(worktree, "add", "-A")
+    staged = _git(worktree, "diff", "--cached", "--name-only").stdout.splitlines()
+    for staged_path in staged:
+        try:
+            _safe_path(staged_path)
+        except FixError as exc:
+            raise FixError(
+                f"refusing to commit staged path {staged_path!r}: {exc}") from exc
     commit = _git(worktree, "-c", "user.name=triage-agent",
                   "-c", "user.email=triage-agent@trustsight.org",
                   "commit", "-m", title)
